@@ -177,6 +177,9 @@ class MessageWidget(QtWidgets.QFrame):
                 line-height: 1.6;
                 background: transparent;
             }
+            QLabel::item:selected {
+                background-color: #3d8bfd;
+            }
         """)
         layout.addWidget(self.content_label)
         
@@ -232,6 +235,9 @@ class ChatWidget(QtWidgets.QWidget):
         self.current_message_widget = None
         self.is_thinking = False
         self.is_streaming = False
+        self.loading_dots = 0
+        self.loading_timer = QtCore.QTimer()
+        self.loading_timer.timeout.connect(self._update_loading_animation)
         self.setup_ui()
     
     def setup_ui(self):
@@ -296,6 +302,9 @@ class ChatWidget(QtWidgets.QWidget):
         self.messages_layout.setSpacing(10)
         self.messages_layout.setContentsMargins(5, 5, 5, 5)
         self.messages_layout.addStretch()
+        
+        # 创建加载指示器（始终在底部）
+        self._create_loading_indicator()
         
         scroll.setWidget(self.messages_container)
         chat_layout.addWidget(scroll)
@@ -384,10 +393,42 @@ class ChatWidget(QtWidgets.QWidget):
             self.send_btn.danger = False
             self.send_btn.update_style()
     
+    def _update_loading_animation(self):
+        """更新加载动画 - 旋转指示器"""
+        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self.loading_dots = (self.loading_dots + 1) % len(spinner_chars)
+        spinner = spinner_chars[self.loading_dots]
+        
+        loading_text = "%s %s" % (spinner, i18n._('loading'))
+        self.loading_indicator.set_content(loading_text)
+    
+    def _create_loading_indicator(self):
+        """创建加载指示器（始终在底部）"""
+        self.loading_indicator = MessageWidget('thinking', i18n._('loading'))
+        self.loading_indicator.hide()
+        # 插入到 stretch 之前（最后一个位置）
+        self.messages_layout.insertWidget(self.messages_layout.count() - 1, self.loading_indicator)
+    
+    def show_loading(self):
+        """显示加载指示器"""
+        self.loading_indicator.show()
+        self.loading_dots = 0
+        self.loading_timer.start(80)
+        self.scroll_to_bottom()
+    
+    def hide_loading(self):
+        """隐藏加载指示器"""
+        self.loading_timer.stop()
+        self.loading_indicator.hide()
+    
     def add_message(self, role, content):
-        """添加消息"""
+        """添加消息 - 插入到加载指示器之前"""
         msg_widget = MessageWidget(role, content)
-        self.messages_layout.insertWidget(self.messages_layout.count() - 1, msg_widget)
+        # 插入到倒数第二个位置（加载指示器之前）
+        insert_pos = self.messages_layout.count() - 2
+        if insert_pos < 0:
+            insert_pos = 0
+        self.messages_layout.insertWidget(insert_pos, msg_widget)
         self.messages.append({'role': role, 'widget': msg_widget})
         self.current_message_widget = msg_widget
         self.scroll_to_bottom()
@@ -444,42 +485,38 @@ class ChatWidget(QtWidgets.QWidget):
 
 
 class ConfigWidget(QtWidgets.QWidget):
-    """配置标签页"""
+    """配置标签页 - 支持 LiteLLM 多提供商"""
 
     config_changed = QtCore.Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_config_name = None
-        self.labels = {}  # 保存需要更新文本的标签引用
+        self.labels = {}
         self.setup_ui()
         self.load_configs()
 
     def update_language(self):
         """更新界面语言"""
-        # 更新标签页标题（由主窗口调用 setTabText）
-        # 更新保存的配置列表标签
-        if hasattr(self, 'labels') and 'list_label' in self.labels:
-            self.labels['list_label'].setText(i18n._('saved_configs'))
-
-        # 更新表单标签
         if hasattr(self, 'labels'):
-            if 'name_label' in self.labels:
-                self.labels['name_label'].setText(i18n._('name'))
-            if 'url_label' in self.labels:
-                self.labels['url_label'].setText(i18n._('api_url'))
-            if 'key_label' in self.labels:
-                self.labels['key_label'].setText(i18n._('api_key'))
-            if 'model_label' in self.labels:
-                self.labels['model_label'].setText(i18n._('model'))
+            self.labels.get('list_label').setText(i18n._('saved_configs'))
+            self.labels.get('name_label').setText(i18n._('name'))
+            self.labels.get('provider_label').setText(i18n._('provider'))
+            self.labels.get('url_label').setText(i18n._('api_url'))
+            self.labels.get('key_label').setText(i18n._('api_key'))
+            self.labels.get('model_label').setText(i18n._('model'))
+            self.labels.get('version_label').setText(i18n._('api_version'))
+            self.labels.get('temp_label').setText(i18n._('temperature'))
+            self.labels.get('tokens_label').setText(i18n._('max_tokens'))
+            self.labels.get('timeout_label').setText(i18n._('timeout'))
 
-        # 更新复选框
         if hasattr(self, 'reasoning_checkbox'):
             self.reasoning_checkbox.setText(i18n._('reasoning_model'))
         if hasattr(self, 'current_checkbox'):
             self.current_checkbox.setText(i18n._('set_as_current'))
+        if hasattr(self, 'advanced_toggle'):
+            self.advanced_toggle.setText(i18n._('show_advanced'))
 
-        # 更新按钮
         if hasattr(self, 'new_btn'):
             self.new_btn.setText(i18n._('new_button'))
         if hasattr(self, 'save_btn'):
@@ -493,15 +530,27 @@ class ConfigWidget(QtWidgets.QWidget):
         if hasattr(self, 'export_btn'):
             self.export_btn.setText(i18n._('export_button'))
 
-        # 重新加载配置列表以更新 [当前使用] 文本
+        self.update_provider_combo()
         self.load_configs()
 
-    def setup_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+    def update_provider_combo(self):
+        """更新提供商下拉框"""
+        current_provider = self.provider_combo.currentData()
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        for provider_id in config.get_provider_list():
+            provider_info = config.get_provider_info(provider_id)
+            self.provider_combo.addItem(provider_info['name'], provider_id)
+        idx = self.provider_combo.findData(current_provider)
+        if idx >= 0:
+            self.provider_combo.setCurrentIndex(idx)
+        self.provider_combo.blockSignals(False)
 
-        # 主面板
+    def setup_ui(self):
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(15)
+
         panel = QtWidgets.QFrame()
         panel.setStyleSheet("""
             QFrame {
@@ -511,28 +560,27 @@ class ConfigWidget(QtWidgets.QWidget):
             }
         """)
         panel_layout = QtWidgets.QVBoxLayout(panel)
-        panel_layout.setContentsMargins(25, 25, 25, 25)
-        panel_layout.setSpacing(15)
+        panel_layout.setContentsMargins(25, 20, 25, 20)
+        panel_layout.setSpacing(12)
 
-        # 已保存的配置列表
         self.labels['list_label'] = QtWidgets.QLabel(i18n._('saved_configs'))
         self.labels['list_label'].setStyleSheet("color: #CCCCCC; font-size: 14px;")
         panel_layout.addWidget(self.labels['list_label'])
         
         self.config_list = QtWidgets.QListWidget()
-        self.config_list.setMaximumHeight(120)
+        self.config_list.setMaximumHeight(80)
         self.config_list.setStyleSheet("""
             QListWidget {
                 background-color: #4A4A4A;
                 color: #FFFFFF;
                 border: none;
-                border-radius: 10px;
-                padding: 5px;
-                font-size: 14px;
+                border-radius: 8px;
+                padding: 3px;
+                font-size: 13px;
             }
             QListWidget::item {
-                padding: 8px;
-                border-radius: 5px;
+                padding: 6px;
+                border-radius: 4px;
             }
             QListWidget::item:selected {
                 background-color: #5DADE2;
@@ -545,52 +593,132 @@ class ConfigWidget(QtWidgets.QWidget):
         self.config_list.itemClicked.connect(self.on_config_selected)
         panel_layout.addWidget(self.config_list)
         
-        # 配置表单
-        form_layout = QtWidgets.QFormLayout()
-        form_layout.setSpacing(12)
+        line_style = """
+            QLineEdit {
+                background-color: #4A4A4A;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #5DADE2;
+            }
+            QLineEdit:disabled {
+                background-color: #3A3A3A;
+                color: #888888;
+            }
+        """
         
-        def create_line_edit(placeholder=""):
-            edit = QtWidgets.QLineEdit()
-            edit.setPlaceholderText(placeholder)
-            edit.setStyleSheet("""
-                QLineEdit {
-                    background-color: #4A4A4A;
-                    color: #FFFFFF;
-                    border: none;
-                    border-radius: 10px;
-                    padding: 10px 15px;
-                    font-size: 14px;
-                }
-                QLineEdit:focus {
-                    border: 2px solid #5DADE2;
-                }
-            """)
-            return edit
+        combo_style = """
+            QComboBox {
+                background-color: #4A4A4A;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 25px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 6px solid #CCCCCC;
+                margin-right: 8px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #4A4A4A;
+                color: #FFFFFF;
+                selection-background-color: #5DADE2;
+                selection-color: #2D2D2D;
+                border: 1px solid #555555;
+                border-radius: 4px;
+            }
+            QComboBox:disabled {
+                background-color: #3A3A3A;
+                color: #888888;
+            }
+        """
         
-        self.name_edit = create_line_edit("e.g., SiliconFlow, OpenAI")
-        form_layout.addRow(self.create_label(i18n._('name'), 'name_label'), self.name_edit)
+        form_layout = QtWidgets.QGridLayout()
+        form_layout.setSpacing(10)
+        form_layout.setColumnStretch(1, 1)
+        
+        row = 0
+        self.labels['name_label'] = QtWidgets.QLabel(i18n._('name'))
+        self.labels['name_label'].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.name_edit = QtWidgets.QLineEdit()
+        self.name_edit.setPlaceholderText("e.g., My GPT-4")
+        self.name_edit.setStyleSheet(line_style)
+        form_layout.addWidget(self.labels['name_label'], row, 0)
+        form_layout.addWidget(self.name_edit, row, 1)
+        
+        row += 1
+        self.labels['provider_label'] = QtWidgets.QLabel(i18n._('provider'))
+        self.labels['provider_label'].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.provider_combo = QtWidgets.QComboBox()
+        self.provider_combo.setStyleSheet(combo_style)
+        for provider_id in config.get_provider_list():
+            provider_info = config.get_provider_info(provider_id)
+            self.provider_combo.addItem(provider_info['name'], provider_id)
+        self.provider_combo.currentIndexChanged.connect(self.on_provider_changed)
+        form_layout.addWidget(self.labels['provider_label'], row, 0)
+        form_layout.addWidget(self.provider_combo, row, 1)
 
-        self.url_edit = create_line_edit("https://api.example.com/v1")
-        form_layout.addRow(self.create_label(i18n._('api_url'), 'url_label'), self.url_edit)
+        row += 1
+        self.labels['model_label'] = QtWidgets.QLabel(i18n._('model'))
+        self.labels['model_label'].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.model_combo = QtWidgets.QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setStyleSheet(combo_style)
+        form_layout.addWidget(self.labels['model_label'], row, 0)
+        form_layout.addWidget(self.model_combo, row, 1)
 
-        self.key_edit = create_line_edit("sk-...")
+        row += 1
+        self.labels['url_label'] = QtWidgets.QLabel(i18n._('api_url'))
+        self.labels['url_label'].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.url_edit = QtWidgets.QLineEdit()
+        self.url_edit.setPlaceholderText(i18n._('api_url_placeholder'))
+        self.url_edit.setStyleSheet(line_style)
+        form_layout.addWidget(self.labels['url_label'], row, 0)
+        form_layout.addWidget(self.url_edit, row, 1)
+
+        row += 1
+        self.labels['key_label'] = QtWidgets.QLabel(i18n._('api_key'))
+        self.labels['key_label'].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.key_edit = QtWidgets.QLineEdit()
+        self.key_edit.setPlaceholderText(i18n._('api_key_placeholder'))
         self.key_edit.setEchoMode(QtWidgets.QLineEdit.Password)
-        form_layout.addRow(self.create_label(i18n._('api_key'), 'key_label'), self.key_edit)
+        self.key_edit.setStyleSheet(line_style)
+        form_layout.addWidget(self.labels['key_label'], row, 0)
+        form_layout.addWidget(self.key_edit, row, 1)
 
-        self.model_edit = create_line_edit("e.g., gpt-4, deepseek-chat")
-        form_layout.addRow(self.create_label(i18n._('model'), 'model_label'), self.model_edit)
+        row += 1
+        self.labels['version_label'] = QtWidgets.QLabel(i18n._('api_version'))
+        self.labels['version_label'].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.version_edit = QtWidgets.QLineEdit()
+        self.version_edit.setPlaceholderText(i18n._('api_version_placeholder'))
+        self.version_edit.setStyleSheet(line_style)
+        form_layout.addWidget(self.labels['version_label'], row, 0)
+        form_layout.addWidget(self.version_edit, row, 1)
         
-        # 复选框
+        panel_layout.addLayout(form_layout)
+        
         checkbox_style = """
             QCheckBox {
                 color: #CCCCCC;
-                font-size: 13px;
-                spacing: 8px;
+                font-size: 12px;
+                spacing: 6px;
             }
             QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border-radius: 4px;
+                width: 16px;
+                height: 16px;
+                border-radius: 3px;
                 border: none;
                 background-color: #4A4A4A;
             }
@@ -601,17 +729,84 @@ class ConfigWidget(QtWidgets.QWidget):
         
         self.reasoning_checkbox = QtWidgets.QCheckBox(i18n._('reasoning_model'))
         self.reasoning_checkbox.setStyleSheet(checkbox_style)
-        form_layout.addRow("", self.reasoning_checkbox)
+        form_layout.addWidget(self.reasoning_checkbox, row, 0, 1, 2)
         
+        row += 1
         self.current_checkbox = QtWidgets.QCheckBox(i18n._('set_as_current'))
         self.current_checkbox.setStyleSheet(checkbox_style)
-        form_layout.addRow("", self.current_checkbox)
+        form_layout.addWidget(self.current_checkbox, row, 0, 1, 2)
         
         panel_layout.addLayout(form_layout)
+
+        self.advanced_toggle = QtWidgets.QPushButton(i18n._('show_advanced'))
+        self.advanced_toggle.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #5DADE2;
+                border: none;
+                font-size: 12px;
+                text-align: left;
+                padding: 3px 0;
+            }
+            QPushButton:hover {
+                color: #7EC8E3;
+            }
+        """)
+        self.advanced_toggle.clicked.connect(self.toggle_advanced)
+        panel_layout.addWidget(self.advanced_toggle)
+
+        self.advanced_frame = QtWidgets.QFrame()
+        self.advanced_frame.setStyleSheet("QFrame { background: transparent; }")
+        advanced_layout = QtWidgets.QGridLayout(self.advanced_frame)
+        advanced_layout.setSpacing(8)
+        advanced_layout.setColumnStretch(1, 1)
         
-        # 按钮区域
+        spin_style = """
+            QSpinBox, QDoubleSpinBox {
+                background-color: #4A4A4A;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+        """
+        
+        self.labels['temp_label'] = QtWidgets.QLabel(i18n._('temperature'))
+        self.labels['temp_label'].setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.temp_spin = QtWidgets.QDoubleSpinBox()
+        self.temp_spin.setRange(0.0, 2.0)
+        self.temp_spin.setSingleStep(0.1)
+        self.temp_spin.setValue(0.7)
+        self.temp_spin.setStyleSheet(spin_style)
+        advanced_layout.addWidget(self.labels['temp_label'], 0, 0)
+        advanced_layout.addWidget(self.temp_spin, 0, 1)
+
+        self.labels['tokens_label'] = QtWidgets.QLabel(i18n._('max_tokens'))
+        self.labels['tokens_label'].setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.max_tokens_spin = QtWidgets.QSpinBox()
+        self.max_tokens_spin.setRange(100, 128000)
+        self.max_tokens_spin.setSingleStep(100)
+        self.max_tokens_spin.setValue(4096)
+        self.max_tokens_spin.setStyleSheet(spin_style)
+        advanced_layout.addWidget(self.labels['tokens_label'], 1, 0)
+        advanced_layout.addWidget(self.max_tokens_spin, 1, 1)
+
+        self.labels['timeout_label'] = QtWidgets.QLabel(i18n._('timeout'))
+        self.labels['timeout_label'].setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.timeout_spin = QtWidgets.QSpinBox()
+        self.timeout_spin.setRange(10, 600)
+        self.timeout_spin.setSingleStep(10)
+        self.timeout_spin.setValue(60)
+        self.timeout_spin.setStyleSheet(spin_style)
+        advanced_layout.addWidget(self.labels['timeout_label'], 2, 0)
+        advanced_layout.addWidget(self.timeout_spin, 2, 1)
+        
+        self.advanced_frame.hide()
+        panel_layout.addWidget(self.advanced_frame)
+        
         btn_layout = QtWidgets.QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(8)
         
         self.new_btn = StyledButton(i18n._('new_button'))
         self.new_btn.clicked.connect(self.on_new)
@@ -633,9 +828,8 @@ class ConfigWidget(QtWidgets.QWidget):
         
         panel_layout.addLayout(btn_layout)
         
-        # 导入导出
         io_layout = QtWidgets.QHBoxLayout()
-        io_layout.setSpacing(10)
+        io_layout.setSpacing(8)
         
         self.import_btn = StyledButton(i18n._('import_button'))
         self.import_btn.clicked.connect(self.on_import)
@@ -648,15 +842,53 @@ class ConfigWidget(QtWidgets.QWidget):
         io_layout.addStretch()
         panel_layout.addLayout(io_layout)
         
-        panel_layout.addStretch()
-        layout.addWidget(panel)
+        main_layout.addWidget(panel)
+        main_layout.addStretch()
+
+        self.on_provider_changed(0)
     
-    def create_label(self, text, key=None):
-        label = QtWidgets.QLabel(text)
-        label.setStyleSheet("color: #CCCCCC; font-size: 14px;")
-        if key:
-            self.labels[key] = label
-        return label
+    def toggle_advanced(self):
+        """切换高级设置显示"""
+        if self.advanced_frame.isVisible():
+            self.advanced_frame.hide()
+            self.advanced_toggle.setText(i18n._('show_advanced'))
+        else:
+            self.advanced_frame.show()
+            self.advanced_toggle.setText(i18n._('hide_advanced'))
+    
+    def on_provider_changed(self, index):
+        """提供商改变时更新模型列表和表单"""
+        provider_id = self.provider_combo.currentData()
+        if not provider_id:
+            return
+            
+        provider_info = config.get_provider_info(provider_id)
+        
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        models = provider_info.get('models', [])
+        for model in models:
+            self.model_combo.addItem(model)
+        self.model_combo.blockSignals(False)
+        
+        default_url = provider_info.get('api_base', '')
+        if default_url:
+            self.url_edit.setText(default_url)
+        
+        requires_key = provider_info.get('requires_api_key', True)
+        requires_base = provider_info.get('requires_api_base', False)
+        requires_version = provider_info.get('requires_api_version', False)
+        
+        self.key_edit.setEnabled(requires_key)
+        if not requires_key:
+            self.key_edit.setText("not-required")
+        elif self.key_edit.text() == "not-required":
+            self.key_edit.clear()
+        
+        self.url_edit.setEnabled(requires_base or provider_id == 'custom')
+        self.version_edit.setEnabled(requires_version)
+        self.version_edit.setVisible(requires_version)
+        self.labels['version_label'].setVisible(requires_version)
     
     def load_configs(self):
         self.config_list.clear()
@@ -682,10 +914,27 @@ class ConfigWidget(QtWidgets.QWidget):
     def load_config_to_form(self, cfg):
         self.current_config_name = cfg.get('name')
         self.name_edit.setText(cfg.get('name', ''))
+        
+        provider_id = cfg.get('provider', 'custom')
+        idx = self.provider_combo.findData(provider_id)
+        if idx >= 0:
+            self.provider_combo.setCurrentIndex(idx)
+        
         self.url_edit.setText(cfg.get('api_url', ''))
         self.key_edit.setText(cfg.get('api_key', ''))
-        self.model_edit.setText(cfg.get('model', ''))
+        
+        model = cfg.get('model', '')
+        model_idx = self.model_combo.findText(model)
+        if model_idx >= 0:
+            self.model_combo.setCurrentIndex(model_idx)
+        else:
+            self.model_combo.setEditText(model)
+        
+        self.version_edit.setText(cfg.get('api_version', ''))
         self.reasoning_checkbox.setChecked(cfg.get('is_reasoning_model', False))
+        self.temp_spin.setValue(cfg.get('temperature', 0.7))
+        self.max_tokens_spin.setValue(cfg.get('max_tokens', 4096))
+        self.timeout_spin.setValue(cfg.get('timeout', 60))
         
         current = config.config_manager.get_current_config()
         self.current_checkbox.setChecked(
@@ -695,11 +944,16 @@ class ConfigWidget(QtWidgets.QWidget):
     def clear_form(self):
         self.current_config_name = None
         self.name_edit.clear()
+        self.provider_combo.setCurrentIndex(0)
         self.url_edit.clear()
         self.key_edit.clear()
-        self.model_edit.clear()
+        self.model_combo.setEditText('')
+        self.version_edit.clear()
         self.reasoning_checkbox.setChecked(False)
         self.current_checkbox.setChecked(False)
+        self.temp_spin.setValue(0.7)
+        self.max_tokens_spin.setValue(4096)
+        self.timeout_spin.setValue(60)
     
     def on_new(self):
         self.clear_form()
@@ -707,29 +961,34 @@ class ConfigWidget(QtWidgets.QWidget):
     
     def on_save(self):
         name = self.name_edit.text().strip()
+        provider_id = self.provider_combo.currentData()
         url = self.url_edit.text().strip()
         key = self.key_edit.text().strip()
-        model = self.model_edit.text().strip()
+        model = self.model_combo.currentText().strip()
         
         if not name:
             self.show_warning(i18n._('name_required'))
-            return
-        if not url:
-            self.show_warning(i18n._('url_required'))
-            return
-        if not key:
-            self.show_warning(i18n._('key_required'))
             return
         if not model:
             self.show_warning(i18n._('model_required'))
             return
         
+        provider_info = config.get_provider_info(provider_id)
+        if provider_info.get('requires_api_key', True) and not key:
+            self.show_warning(i18n._('key_required'))
+            return
+        
         cfg = {
             'name': name,
+            'provider': provider_id,
             'api_url': url,
             'api_key': key,
             'model': model,
-            'is_reasoning_model': self.reasoning_checkbox.isChecked()
+            'api_version': self.version_edit.text().strip(),
+            'is_reasoning_model': self.reasoning_checkbox.isChecked(),
+            'temperature': self.temp_spin.value(),
+            'max_tokens': self.max_tokens_spin.value(),
+            'timeout': self.timeout_spin.value(),
         }
         
         if config.config_manager.add_config(cfg):
@@ -761,16 +1020,23 @@ class ConfigWidget(QtWidgets.QWidget):
                 self.config_changed.emit()
     
     def on_test(self):
+        provider_id = self.provider_combo.currentData()
         url = self.url_edit.text().strip()
         key = self.key_edit.text().strip()
-        model = self.model_edit.text().strip()
+        model = self.model_combo.currentText().strip()
         
-        if not url or not key or not model:
+        if not model:
+            self.show_warning(i18n._('error_no_config'))
+            return
+        
+        provider_info = config.get_provider_info(provider_id)
+        if provider_info.get('requires_api_key', True) and not key:
             self.show_warning(i18n._('error_no_config'))
             return
         
         temp_client = ai_client.AIClient()
         temp_client.set_config({
+            'provider': provider_id,
             'api_url': url,
             'api_key': key,
             'model': model
@@ -1197,10 +1463,31 @@ class AIAssistantDialog(QtWidgets.QDialog):
         # 启用最大化、最小化和关闭按钮
         self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.WindowCloseButtonHint | QtCore.Qt.WindowMaximizeButtonHint | QtCore.Qt.WindowMinimizeButtonHint)
 
-        # 设置深色背景
+        # 设置深色背景和全局样式
         self.setStyleSheet("""
             QDialog {
                 background-color: #2D2D2D;
+            }
+            QMenu {
+                background-color: #404040;
+                color: #FFFFFF;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QMenu::item {
+                background-color: transparent;
+                padding: 6px 30px 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #5DADE2;
+                color: #FFFFFF;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #555555;
+                margin: 4px 10px;
             }
         """)
 
@@ -1472,7 +1759,6 @@ class AIAssistantDialog(QtWidgets.QDialog):
         self.chat_widget.input_text.setPlaceholderText(i18n._('input_placeholder'))
         self.chat_widget.send_btn.setText(i18n._('send_button') if not self.chat_widget.is_streaming else i18n._('stop_button'))
         self.chat_widget.clear_btn.setText(i18n._('clear_chat'))
-
         # 更新消息角色标签
         for msg in self.chat_widget.messages:
             role = msg['role']
@@ -1523,7 +1809,7 @@ class AIAssistantDialog(QtWidgets.QDialog):
         request_data = {
             "model": cfg.get('model'),
             "messages": messages,
-            "stream": True,
+            "stream": False,
             "tools": "enabled"
         }
         logger.logger.info(
@@ -1539,27 +1825,30 @@ class AIAssistantDialog(QtWidgets.QDialog):
         self.worker.error_signal.connect(self.on_error)
         self.worker.finished_signal.connect(self.on_request_finished)
         self.worker.start()
+        
+        # 显示加载指示器
+        self.chat_widget.show_loading()
     
     def on_stop_requested(self):
         """用户请求停止"""
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.worker.terminate()
+            self.chat_widget.hide_loading()
             self.chat_widget.set_streaming_state(False)
             self.chat_widget.add_message('assistant', '[已停止]')
     
     def on_thinking(self, text, is_end):
-        if is_end:
-            self.chat_widget.is_thinking = False
-        else:
+        # 显示 reasoning content
+        if text:
             if not self.chat_widget.is_thinking:
                 self.chat_widget.is_thinking = True
                 self.chat_widget.start_message('thinking')
             self.chat_widget.append_to_current(text)
+        if is_end:
+            self.chat_widget.is_thinking = False
     
     def on_content(self, text, is_end):
-        if is_end:
-            pass
-        else:
+        if text:
             if self.chat_widget.is_thinking:
                 self.chat_widget.is_thinking = False
                 self.chat_widget.start_message('assistant')
@@ -1580,9 +1869,11 @@ class AIAssistantDialog(QtWidgets.QDialog):
             {"error": error_msg}
         )
         self.chat_widget.add_message('assistant', "错误: %s" % error_msg)
+        self.chat_widget.hide_loading()
         self.chat_widget.set_streaming_state(False)
     
     def on_request_finished(self):
+        self.chat_widget.hide_loading()
         self.chat_widget.set_streaming_state(False)
     
     def on_config_changed(self):
@@ -1590,7 +1881,7 @@ class AIAssistantDialog(QtWidgets.QDialog):
 
 
 class AIStreamWorker(QtCore.QThread):
-    """AI流式请求工作线程"""
+    """AI请求工作线程 - 非流式调用"""
     
     thinking_signal = QtCore.Signal(str, bool)
     content_signal = QtCore.Signal(str, bool)
@@ -1628,24 +1919,21 @@ class AIStreamWorker(QtCore.QThread):
                 if self._is_running:
                     self.error_signal.emit(error_msg)
             
-            # 执行流式请求
-            for chunk in ai_client.ai_client.chat_stream(
+            result = ai_client.ai_client.chat(
                 self.messages,
                 on_thinking=on_thinking,
                 on_content=on_content,
                 on_tool_call=on_tool_call,
                 on_error=on_error
-            ):
-                if not self._is_running:
-                    break
+            )
             
-            # 记录AI服务器的完整响应
             logger.logger.info(
                 logger.AI_RESPONSE,
                 "AI服务器的完整响应",
                 {
                     "thinking": accumulated_thinking,
-                    "content": accumulated_content
+                    "content": accumulated_content,
+                    "final_result": result
                 }
             )
         

@@ -2,13 +2,14 @@
 '''
 PyMOL AI Assistant Plugin
 
-Version: 2.1.0
+Version: 2.2.0
 Author: Mo Qiqin
 License: MIT
 
 Description:
     An AI-powered assistant plugin for PyMOL that uses tool-calling capabilities
     to control PyMOL through natural language conversations.
+    Now powered by LiteLLM for unified access to 100+ LLM providers.
 '''
 
 from __future__ import print_function
@@ -16,7 +17,7 @@ import sys
 import os
 
 # 版本号
-__version__ = '2.1.0'
+__version__ = '3.0.1'
 
 # 获取插件目录
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +39,8 @@ def check_and_install_dependencies():
     required_packages = {
         'requests': 'requests',
         'PyQt5': 'PyQt5',
-        'openai': 'openai',
+        'litellm': 'litellm',
+        'json_repair': 'json-repair',
     }
 
     missing_packages = []

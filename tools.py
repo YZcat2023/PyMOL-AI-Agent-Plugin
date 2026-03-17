@@ -4,13 +4,47 @@ PyMOL 工具集
 
 定义 AI 可调用的 PyMOL 操作工具。
 这些工具通过 Function Calling 机制被 AI 调用。
+支持 LiteLLM 统一接口，兼容 100+ LLM 提供商。
 """
 
 import os
 import json
 import traceback
 from typing import Dict, List, Any, Optional, Callable
+import litellm
 from . import logger
+
+
+def supports_function_calling(model: str) -> bool:
+    """
+    检查模型是否支持 Function Calling
+    
+    Args:
+        model: 模型名称
+        
+    Returns:
+        bool: 是否支持 Function Calling
+    """
+    try:
+        return litellm.supports_function_calling(model=model)
+    except Exception:
+        return True
+
+
+def supports_parallel_function_calling(model: str) -> bool:
+    """
+    检查模型是否支持并行 Function Calling
+    
+    Args:
+        model: 模型名称
+        
+    Returns:
+        bool: 是否支持并行 Function Calling
+    """
+    try:
+        return litellm.supports_parallel_function_calling(model=model)
+    except Exception:
+        return False
 
 
 def get_tool_definitions() -> List[Dict[str, Any]]:
@@ -896,6 +930,43 @@ class ToolExecutor:
                 self.cmd = cmd
             except ImportError:
                 raise RuntimeError("PyMOL cmd模块不可用")
+
+    def _preprocess_command(self, cmd, command: str) -> str:
+        """
+        预处理 PyMOL 命令，处理特殊颜色模式等
+        
+        Args:
+            cmd: PyMOL cmd 模块
+            command: 原始命令
+            
+        Returns:
+            处理后的命令
+        """
+        import re
+        
+        command_lower = command.lower().strip()
+        
+        color_pattern = r'^color\s+(\S+)\s*,?\s*(.*)$'
+        match = re.match(color_pattern, command, re.IGNORECASE)
+        
+        if match:
+            color_name = match.group(1).lower()
+            selection = match.group(2).strip() if match.group(2) else "all"
+            
+            if color_name == "rainbow":
+                return f'spectrum count, rainbow, {selection}'
+            elif color_name == "by_element":
+                return f'color atomic, ({selection}) and not elem C; color carbon, elem C and ({selection})'
+            elif color_name == "by_chain":
+                return f'util.cbc {selection}'
+            elif color_name == "by_ss":
+                return f'color ss, {selection}'
+            elif color_name == "by_resi":
+                return f'spectrum count, rainbow, {selection}'
+            elif color_name == "by_b":
+                return f'spectrum b, blue_red, {selection}'
+        
+        return command
     
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -971,17 +1042,30 @@ class ToolExecutor:
             if not name:
                 name = code.lower()
 
-            # 检查对象是否已存在
             existing_objects = cmd.get_names("objects")
             if name in existing_objects:
-                # 删除已存在的对象
                 cmd.delete(name)
                 print(f"[PyMOL AI Assistant] 删除已存在的对象: {name}")
 
+            cmd._get_feedback()
             cmd.fetch(code, name)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
+
+            error_patterns = ["Error:", "error:", "ERROR:", "failed", "Failed"]
+            has_error = any(pattern in feedback_text for pattern in error_patterns)
+
+            if has_error:
+                return {
+                    "success": False,
+                    "message": f"加载失败: {feedback_text}",
+                    "output": feedback_text
+                }
+
             return {
                 "success": True,
-                "message": f"已从 PDB 下载并加载 {code}，对象名为 '{name}'"
+                "message": f"已从 PDB 下载并加载 {code}，对象名为 '{name}'",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_load":
@@ -989,20 +1073,46 @@ class ToolExecutor:
             name = arguments.get("name", "")
             format = arguments.get("format", "")
 
-            if name:
-                if format:
-                    cmd.load(filename, name, format=format)
+            cmd._get_feedback()
+
+            try:
+                if name:
+                    if format:
+                        cmd.load(filename, name, format=format)
+                    else:
+                        cmd.load(filename, name)
                 else:
-                    cmd.load(filename, name)
-            else:
-                if format:
-                    cmd.load(filename, format=format)
-                else:
-                    cmd.load(filename)
-            return {
-                "success": True,
-                "message": f"已加载文件: {filename}"
-            }
+                    if format:
+                        cmd.load(filename, format=format)
+                    else:
+                        cmd.load(filename)
+
+                feedback = cmd._get_feedback()
+                feedback_text = "\n".join(feedback) if feedback else ""
+
+                error_patterns = ["Error:", "error:", "ERROR:", "failed", "Failed"]
+                has_error = any(pattern in feedback_text for pattern in error_patterns)
+
+                if has_error:
+                    return {
+                        "success": False,
+                        "message": f"加载失败: {feedback_text}",
+                        "output": feedback_text
+                    }
+
+                return {
+                    "success": True,
+                    "message": f"已加载文件: {filename}",
+                    "output": feedback_text
+                }
+            except Exception as e:
+                feedback = cmd._get_feedback()
+                feedback_text = "\n".join(feedback) if feedback else ""
+                return {
+                    "success": False,
+                    "message": f"加载失败: {str(e)}",
+                    "output": feedback_text if feedback_text else str(e)
+                }
 
         elif tool_name == "pymol_run_script":
             filename = arguments.get("filename", "")
@@ -1085,7 +1195,6 @@ class ToolExecutor:
         elif tool_name == "pymol_do_command":
             commands = arguments.get("commands", [])
 
-            # 确保 commands 是列表
             if isinstance(commands, str):
                 commands = [commands]
 
@@ -1097,43 +1206,59 @@ class ToolExecutor:
                 if not command:
                     continue
 
-                # 清除之前的反馈
                 cmd._get_feedback()
 
-                # 执行命令
+                processed_command = self._preprocess_command(cmd, command)
+
                 try:
-                    cmd.do(command)
+                    if processed_command != command:
+                        for cmd_part in processed_command.split(';'):
+                            cmd_part = cmd_part.strip()
+                            if cmd_part:
+                                cmd.do(cmd_part)
+                    else:
+                        cmd.do(command)
                 except Exception as e:
                     has_error = True
                     results.append({
                         "command": command,
                         "status": "error",
-                        "message": str(e)
+                        "message": str(e),
+                        "output": str(e)
                     })
                     continue
 
-                # 获取命令执行的反馈输出
                 feedback = cmd._get_feedback()
                 feedback_text = "\n".join(feedback) if feedback else ""
 
-                # 检查反馈中是否包含错误信息
-                if feedback_text and ("Error" in feedback_text or "error" in feedback_text.lower()):
+                error_patterns = ["Error:", "error:", "ERROR:", "Traceback", "Exception", "Warning:"]
+                has_error_in_output = any(pattern in feedback_text for pattern in error_patterns)
+
+                if has_error_in_output:
                     has_error = True
                     results.append({
                         "command": command,
                         "status": "error",
-                        "message": feedback_text
+                        "message": feedback_text,
+                        "output": feedback_text
                     })
                 else:
                     results.append({
                         "command": command,
                         "status": "success",
-                        "message": feedback_text if feedback_text else "命令执行成功"
+                        "message": "命令执行成功",
+                        "output": feedback_text if feedback_text else ""
                     })
 
-            # 生成汇总消息
             success_count = sum(1 for r in results if r["status"] == "success")
             error_count = len(results) - success_count
+
+            all_outputs = []
+            for r in results:
+                if r.get("output"):
+                    all_outputs.append(f"[{r['command']}]\n{r['output']}")
+
+            combined_output = "\n".join(all_outputs).strip()
 
             if error_count > 0:
                 error_messages = [f"命令 '{r['command']}': {r['message']}" for r in results if r["status"] == "error"]
@@ -1141,13 +1266,15 @@ class ToolExecutor:
                     "success": False,
                     "message": f"执行完成: {success_count} 个成功, {error_count} 个失败",
                     "details": results,
-                    "errors": error_messages
+                    "errors": error_messages,
+                    "output": combined_output
                 }
             else:
                 return {
                     "success": True,
                     "message": f"成功执行 {success_count} 个命令",
-                    "details": results
+                    "details": results,
+                    "output": combined_output
                 }
 
         elif tool_name == "pymol_get_info":
@@ -1505,11 +1632,10 @@ class ToolExecutor:
             name = arguments.get("name", "")
 
             try:
-                result = cmd.find_pairs(f"({selection1}) and ({selection2})", cutoff)
+                result = cmd.find_pairs(selection1, selection2, cutoff=cutoff)
                 contact_count = len(result)
 
                 if name:
-                    # 创建选择集
                     selections = []
                     for pair in result:
                         for atom in pair:
@@ -1533,19 +1659,27 @@ class ToolExecutor:
         elif tool_name == "pymol_show":
             representation = arguments.get("representation", "")
             selection = arguments.get("selection", "all")
+            cmd._get_feedback()
             cmd.show(representation, selection)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"已显示 {representation}，选择: {selection}"
+                "message": f"已显示 {representation}，选择: {selection}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_hide":
             representation = arguments.get("representation", "everything")
             selection = arguments.get("selection", "all")
+            cmd._get_feedback()
             cmd.hide(representation, selection)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"已隐藏 {representation}，选择: {selection}"
+                "message": f"已隐藏 {representation}，选择: {selection}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_color":
@@ -1558,68 +1692,49 @@ class ToolExecutor:
                     "message": "错误: 未指定颜色"
                 }
 
+            cmd._get_feedback()
+
             try:
                 # 特殊着色模式
                 if color == "rainbow":
-                    # 使用 spectrum 命令，按原子计数着色，rainbow 调色板
                     cmd.spectrum("count", "rainbow", selection)
 
                 elif color == "by_element":
-                    # 按元素类型着色 - 使用 atomic 颜色
                     cmd.color("atomic", selection)
 
                 elif color == "by_chain":
-                    # 按链着色 - 使用 util.cbc (color by chain)
                     cmd.util.cbc(selection)
 
                 elif color == "by_ss":
-                    # 按二级结构着色 - 使用 ss (secondary structure) 颜色
-                    # 螺旋: 红色, 折叠: 黄色, 环: 绿色
                     cmd.color("ss", selection)
 
                 elif color == "by_resi":
-                    # 按残基序号渐变色
                     cmd.spectrum("count", "rainbow", selection)
 
                 elif color == "by_b":
-                    # 按 B-factor (温度因子) 渐变色
                     cmd.spectrum("b", "blue_red", selection)
 
                 else:
-                    # 标准颜色名称
-                    # 首先检查颜色是否有效
                     valid_colors = [
-                        # 基础色
                         'red', 'green', 'blue', 'yellow', 'cyan', 'magenta', 'white', 'black',
-                        # 红色系
                         'tv_red', 'raspberry', 'darksalmon', 'salmon', 'deepsalmon', 'warmpink',
                         'firebrick', 'ruby', 'chocolate', 'brown',
-                        # 绿色系
                         'tv_green', 'chartreuse', 'splitpea', 'smudge', 'palegreen', 'limegreen',
                         'lime', 'limon', 'forest',
-                        # 蓝色系
                         'tv_blue', 'marine', 'slate', 'lightblue', 'skyblue', 'purpleblue',
                         'deepblue', 'density',
-                        # 黄色系
                         'tv_yellow', 'paleyellow', 'yelloworange', 'wheat', 'sand',
-                        # 品红系
                         'lightmagenta', 'hotpink', 'pink', 'lightpink', 'dirtyviolet', 'violet',
                         'violetpurple', 'purple', 'deeppurple',
-                        # 青色系
                         'palecyan', 'aquamarine', 'greencyan', 'teal', 'deepteal', 'lightteal',
-                        # 橙色系
                         'tv_orange', 'brightorange', 'lightorange', 'olive', 'deepolive',
-                        # 灰色系
                         'gray', 'grey', 'gray90', 'gray80', 'gray70', 'gray60', 'gray50',
                         'gray40', 'gray30', 'gray20', 'gray10',
-                        # 其他
                         'orange', 'pink', 'violet', 'brown', 'wheat', 'slate', 'salmon',
-                        # 特殊
                         'atomic', 'auto', 'default', 'current'
                     ]
 
                     if color not in valid_colors:
-                        # 尝试一些常见别名映射
                         color_aliases = {
                             'gray': 'grey',
                             'grey': 'gray',
@@ -1629,32 +1744,57 @@ class ToolExecutor:
 
                     cmd.color(color, selection)
 
+                feedback = cmd._get_feedback()
+                feedback_text = "\n".join(feedback) if feedback else ""
+
+                error_patterns = ["Error:", "error:", "ERROR:", "Unknown color"]
+                has_error = any(pattern in feedback_text for pattern in error_patterns)
+
+                if has_error:
+                    return {
+                        "success": False,
+                        "message": f"着色失败: {feedback_text}",
+                        "output": feedback_text
+                    }
+
                 return {
                     "success": True,
-                    "message": f"已将 '{selection}' 设置为 '{color}' 颜色"
+                    "message": f"已将 '{selection}' 设置为 '{color}' 颜色",
+                    "output": feedback_text
                 }
 
             except Exception as e:
+                feedback = cmd._get_feedback()
+                feedback_text = "\n".join(feedback) if feedback else ""
                 return {
                     "success": False,
-                    "message": f"着色失败: {str(e)}"
+                    "message": f"着色失败: {str(e)}",
+                    "output": feedback_text if feedback_text else str(e)
                 }
 
         elif tool_name == "pymol_bg_color":
             color = arguments.get("color", "") or "black"
+            cmd._get_feedback()
             cmd.bg_color(color)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"背景颜色已设置为 {color}"
+                "message": f"背景颜色已设置为 {color}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_zoom":
             selection = arguments.get("selection", "all")
             buffer = arguments.get("buffer", 0)
+            cmd._get_feedback()
             cmd.zoom(selection, buffer=buffer)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"视图已缩放到: {selection}"
+                "message": f"视图已缩放到: {selection}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_rotate":
@@ -1662,47 +1802,63 @@ class ToolExecutor:
             angle = arguments.get("angle", 90)
             selection = arguments.get("selection", "")
 
+            cmd._get_feedback()
             if selection:
                 cmd.rotate(axis, angle, selection)
             else:
                 cmd.rotate(axis, angle)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
 
             return {
                 "success": True,
-                "message": f"已旋转 {axis} 轴 {angle} 度"
+                "message": f"已旋转 {axis} 轴 {angle} 度",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_select":
             name = arguments.get("name", "")
             selection = arguments.get("selection", "")
+            cmd._get_feedback()
             cmd.select(name, selection)
             count = cmd.count_atoms(name)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"已创建选择集 '{name}'，包含 {count} 个原子"
+                "message": f"已创建选择集 '{name}'，包含 {count} 个原子",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_label":
             selection = arguments.get("selection", "")
             expression = arguments.get("expression", "%s%i")
+            cmd._get_feedback()
             cmd.label(selection, f'"{expression}"')
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"已为 {selection} 添加标签"
+                "message": f"已为 {selection} 添加标签",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_ray":
             width = arguments.get("width", 0)
             height = arguments.get("height", 0)
 
+            cmd._get_feedback()
             if width > 0 and height > 0:
                 cmd.ray(width, height)
             else:
                 cmd.ray()
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
 
             return {
                 "success": True,
-                "message": "光线追踪渲染完成"
+                "message": "光线追踪渲染完成",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_png":
@@ -1710,33 +1866,49 @@ class ToolExecutor:
             dpi = arguments.get("dpi", 300)
             ray = arguments.get("ray", 1)
 
+            cmd._get_feedback()
             cmd.png(filename, dpi=dpi, ray=ray)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"图像已保存到: {filename}"
+                "message": f"图像已保存到: {filename}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_reset":
+            cmd._get_feedback()
             cmd.reset()
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": "视图已重置"
+                "message": "视图已重置",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_center":
             selection = arguments.get("selection", "all")
+            cmd._get_feedback()
             cmd.center(selection)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"视图中心已移动到: {selection}"
+                "message": f"视图中心已移动到: {selection}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_remove":
             name = arguments.get("name", "")
+            cmd._get_feedback()
             cmd.remove(name)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
             return {
                 "success": True,
-                "message": f"已删除对象或选择集: {name}"
+                "message": f"已删除对象或选择集: {name}",
+                "output": feedback_text
             }
 
         elif tool_name == "pymol_set":
@@ -1744,14 +1916,18 @@ class ToolExecutor:
             value = arguments.get("value", "")
             selection = arguments.get("selection", "")
 
+            cmd._get_feedback()
             if selection:
                 cmd.set(setting, value, selection)
             else:
                 cmd.set(setting, value)
+            feedback = cmd._get_feedback()
+            feedback_text = "\n".join(feedback) if feedback else ""
 
             return {
                 "success": True,
-                "message": f"已设置 {setting} = {value}"
+                "message": f"已设置 {setting} = {value}",
+                "output": feedback_text
             }
 
         else:

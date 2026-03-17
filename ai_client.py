@@ -1,35 +1,83 @@
 # -*- coding: utf-8 -*-
 '''
-AI客户端模块 - 使用OpenAI Python SDK，支持流式输出和工具调用
+AI客户端模块 - 使用LiteLLM，非流式调用
+LiteLLM提供统一的API接口，支持100+LLM提供商
 '''
 
+import hashlib
 import json
-import re
-from openai import OpenAI
+import secrets
+import string
+from typing import Any
+
+import json_repair
+import litellm
+from litellm import completion
 from . import config, tools, logger
+
+_ALNUM = string.ascii_letters + string.digits
+
+
+def _short_tool_id() -> str:
+    """Generate a 9-char alphanumeric ID compatible with all providers."""
+    return "".join(secrets.choice(_ALNUM) for _ in range(9))
+
+
+def _normalize_tool_call_id(tool_call_id: Any) -> Any:
+    """Normalize tool_call_id to a provider-safe 9-char alphanumeric form."""
+    if not isinstance(tool_call_id, str):
+        return tool_call_id
+    if len(tool_call_id) == 9 and tool_call_id.isalnum():
+        return tool_call_id
+    return hashlib.sha1(tool_call_id.encode()).hexdigest()[:9]
 
 
 class AIClient:
-    """AI客户端 - 基于OpenAI SDK"""
+    """AI客户端 - 基于LiteLLM，非流式调用"""
 
     def __init__(self):
-        self.client = None
+        self.provider = None
+        self.api_url = None
+        self.api_key = None
+        self.model = None
+        self.api_version = None
         self.is_reasoning_model = False
+        self.temperature = 0.7
+        self.max_tokens = 4096
+        self.timeout = 60
+        self.max_iterations = 40
 
     def set_config(self, api_config):
         """设置API配置"""
+        self.provider = api_config.get('provider', 'custom')
         self.api_url = api_config.get('api_url', '')
         self.api_key = api_config.get('api_key', '')
         self.model = api_config.get('model', '')
+        self.api_version = api_config.get('api_version', '')
         self.is_reasoning_model = api_config.get('is_reasoning_model', False)
+        self.temperature = api_config.get('temperature', 0.7)
+        self.max_tokens = api_config.get('max_tokens', 4096)
+        self.timeout = api_config.get('timeout', 60)
 
-        # 初始化OpenAI客户端
-        if self.api_url and self.api_key:
-            self.client = OpenAI(
-                base_url=self.api_url,
-                api_key=self.api_key,
-                timeout=120.0
-            )
+    def _get_model_name(self):
+        """获取LiteLLM格式的模型名称"""
+        if not self.model:
+            return None
+        
+        provider_info = config.get_provider_info(self.provider)
+        prefix = provider_info.get('prefix', 'openai/')
+        
+        if self.model.startswith(prefix):
+            return self.model
+        
+        known_prefixes = ['openai/', 'azure/', 'anthropic/', 'gemini/', 
+                          'ollama/', 'zhipu/', 'openrouter/', 'together_ai/',
+                          'huggingface/', 'bedrock/', 'vertex_ai/', 'groq/']
+        for known_prefix in known_prefixes:
+            if self.model.startswith(known_prefix):
+                return self.model
+        
+        return f"{prefix}{self.model}"
 
     def _get_system_prompt(self):
         """获取系统提示词"""
@@ -95,49 +143,127 @@ class AIClient:
 6. 选择表达式语法示例：chain A, resi 1-100, name CA, resn ASP, elem C, chain A and resi 50, /1abc//A/50/CA
 """
 
-    def _parse_tool_calls_from_content(self, content):
+    def _sanitize_messages(self, messages: list[dict]) -> list[dict]:
+        """清理消息格式，标准化 tool_call_id"""
+        id_map: dict[str, str] = {}
+        
+        def map_id(value: Any) -> Any:
+            if not isinstance(value, str):
+                return value
+            return id_map.setdefault(value, _normalize_tool_call_id(value))
+        
+        sanitized = []
+        for msg in messages:
+            clean = dict(msg)
+            
+            if isinstance(clean.get("tool_calls"), list):
+                normalized_tool_calls = []
+                for tc in clean["tool_calls"]:
+                    if not isinstance(tc, dict):
+                        normalized_tool_calls.append(tc)
+                        continue
+                    tc_clean = dict(tc)
+                    tc_clean["id"] = map_id(tc_clean.get("id"))
+                    normalized_tool_calls.append(tc_clean)
+                clean["tool_calls"] = normalized_tool_calls
+            
+            if "tool_call_id" in clean and clean["tool_call_id"]:
+                clean["tool_call_id"] = map_id(clean["tool_call_id"])
+            
+            sanitized.append(clean)
+        
+        return sanitized
+
+    def _chat(self, messages: list[dict], use_tools: bool = True) -> dict:
         """
-        从内容中解析工具调用（处理某些模型将工具调用输出到content中的情况）
-        支持格式：<|tool_calls_section_begin|><|tool_call_begin|>functions.xxx:id<|tool_call_argument_begin|>{...}<|tool_call_end|><|tool_calls_section_end|>
+        发送非流式聊天请求
+        
+        Returns:
+            dict: {
+                'content': str,
+                'tool_calls': list,
+                'reasoning_content': str,
+                'finish_reason': str
+            }
         """
+        model_name = self._get_model_name()
+        
+        request_params = {
+            'model': model_name,
+            'messages': self._sanitize_messages(messages),
+            'temperature': self.temperature,
+            'max_tokens': max(1, self.max_tokens),
+            'timeout': self.timeout,
+        }
+
+        if self.api_key:
+            request_params['api_key'] = self.api_key
+
+        if self.api_url:
+            request_params['api_base'] = self.api_url
+
+        if self.provider == 'azure' and self.api_version:
+            request_params['api_version'] = self.api_version
+
+        if use_tools:
+            request_params['tools'] = tools.TOOLS
+            request_params['tool_choice'] = 'auto'
+
+        logger.logger.debug(
+            logger.AI_REQUEST,
+            "发送AI请求",
+            {"provider": self.provider, "model": self.model, "messages": messages}
+        )
+
+        response = completion(**request_params)
+        return self._parse_response(response)
+
+    def _parse_response(self, response) -> dict:
+        """解析 LiteLLM 响应"""
+        choice = response.choices[0]
+        message = choice.message
+        content = message.content or ""
+        finish_reason = choice.finish_reason or "stop"
+
+        raw_tool_calls = []
+        for ch in response.choices:
+            msg = ch.message
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                raw_tool_calls.extend(msg.tool_calls)
+            if not content and msg.content:
+                content = msg.content
+
         tool_calls = []
-
-        # 匹配工具调用格式
-        pattern = r'<\|tool_call_begin\|>([^<]+)<\|tool_call_argument_begin\|>(\{[^}]*\})<\|tool_call_end\|>'
-        matches = re.findall(pattern, content)
-
-        for match in matches:
-            func_full_name = match[0].strip()
-            arguments_str = match[1]
-
-            # 解析函数名和ID
-            # 格式可能是: functions.tool_name:id 或 tool_name:id
-            if ':' in func_full_name:
-                func_part, call_id = func_full_name.rsplit(':', 1)
-            else:
-                func_part = func_full_name
-                call_id = '0'
-
-            # 移除 'functions.' 前缀
-            if func_part.startswith('functions.'):
-                tool_name = func_part[10:]
-            else:
-                tool_name = func_part
-
+        for tc in raw_tool_calls:
+            args = tc.function.arguments
+            if isinstance(args, str):
+                args = json_repair.loads(args)
+            
             tool_calls.append({
-                'id': call_id,
-                'type': 'function',
-                'function': {
-                    'name': tool_name,
-                    'arguments': arguments_str
-                }
+                'id': _short_tool_id(),
+                'name': tc.function.name,
+                'arguments': args,
             })
 
-        return tool_calls
+        reasoning_content = getattr(message, "reasoning_content", None) or None
 
-    def chat_stream(self, messages, on_thinking=None, on_content=None, on_tool_call=None, on_error=None):
+        return {
+            'content': content,
+            'tool_calls': tool_calls,
+            'reasoning_content': reasoning_content,
+            'finish_reason': finish_reason,
+        }
+
+    def chat(
+        self,
+        messages: list[dict],
+        on_thinking=None,
+        on_content=None,
+        on_tool_call=None,
+        on_error=None,
+    ) -> str:
         """
-        流式聊天
+        非流式聊天，支持多轮工具调用
 
         Args:
             messages: 消息列表
@@ -147,193 +273,175 @@ class AIClient:
             on_error: 错误回调
 
         Returns:
-            generator: 流式生成器
+            str: 最终响应内容
         """
-        # 检查配置
-        if not self.client or not self.model:
+        provider_info = config.get_provider_info(self.provider)
+        requires_key = provider_info.get('requires_api_key', True)
+        
+        if not self.model:
             if on_error:
-                on_error("API配置不完整")
-            return
+                on_error("请选择模型")
+            return ""
+        
+        if requires_key and not self.api_key:
+            if on_error:
+                on_error("请输入 API Key")
+            return ""
 
-        # 检查是否是工具调用后的跟进请求（包含tool角色的消息）
-        has_tool_messages = any(msg.get('role') == 'tool' for msg in messages)
+        full_messages = [
+            {'role': 'system', 'content': self._get_system_prompt()}
+        ] + messages
 
-        # 准备请求参数
-        request_params = {
-            'model': self.model,
-            'messages': [
-                {'role': 'system', 'content': self._get_system_prompt()}
-            ] + messages,
-            'stream': True
-        }
+        iteration = 0
+        final_content = ""
 
-        # 只有在非工具跟进请求时才添加tools参数
-        if not has_tool_messages:
-            request_params['tools'] = tools.TOOLS
+        while iteration < self.max_iterations:
+            iteration += 1
 
-        # 记录请求
-        logger.logger.debug(
-            logger.AI_REQUEST,
-            "发送AI请求",
-            {"model": self.model, "messages": messages}
-        )
+            try:
+                response = self._chat(full_messages, use_tools=True)
+            except litellm.AuthenticationError as e:
+                error_msg = "API认证失败: %s" % str(e)
+                logger.logger.error(logger.ERRORS, error_msg)
+                if on_error:
+                    on_error(error_msg)
+                return ""
+            except litellm.RateLimitError as e:
+                error_msg = "API速率限制: %s" % str(e)
+                logger.logger.error(logger.ERRORS, error_msg)
+                if on_error:
+                    on_error(error_msg)
+                return ""
+            except litellm.APIError as e:
+                error_msg = "API错误: %s" % str(e)
+                logger.logger.error(logger.ERRORS, error_msg)
+                if on_error:
+                    on_error(error_msg)
+                return ""
+            except Exception as e:
+                error_msg = "AI请求错误: %s" % str(e)
+                logger.logger.error(logger.ERRORS, error_msg)
+                if on_error:
+                    on_error(error_msg)
+                return ""
 
-        try:
-            # 使用OpenAI SDK创建流式请求
-            stream = self.client.chat.completions.create(**request_params)
+            content = response['content'] or ""
+            tool_calls = response['tool_calls']
+            reasoning_content = response['reasoning_content']
 
-            # 用于累积tool_calls
-            tool_calls_buffer = {}
-            content_buffer = ""
-            thinking_buffer = ""
-            is_thinking = False
-            has_standard_tool_calls = False
+            if reasoning_content and on_thinking:
+                on_thinking(reasoning_content, True)
 
-            for chunk in stream:
-                delta = chunk.choices[0].delta if chunk.choices else None
+            if content and on_content:
+                on_content(content, True)
 
-                if not delta:
-                    continue
+            if not tool_calls:
+                final_content = content
+                break
 
-                # 处理思考内容（适用于支持reasoning的模型）
-                if self.is_reasoning_model:
-                    reasoning = getattr(delta, 'reasoning_content', None) or getattr(delta, 'reasoning', None)
-                    if reasoning:
-                        if not is_thinking:
-                            is_thinking = True
-                            thinking_buffer = ""
-                        thinking_buffer += reasoning
-                        if on_thinking:
-                            on_thinking(reasoning, False)
-
-                # 处理普通内容
-                content = delta.content or ''
-                if content:
-                    # 如果之前有思考内容，标记思考结束
-                    if is_thinking and thinking_buffer:
-                        is_thinking = False
-                        if on_thinking:
-                            on_thinking("", True)
-
-                    content_buffer += content
-                    if on_content:
-                        on_content(content, False)
-
-                # 处理标准工具调用（OpenAI格式）
-                tool_calls = delta.tool_calls
-                if tool_calls:
-                    has_standard_tool_calls = True
-                    for tc in tool_calls:
-                        index = tc.index if tc.index is not None else 0
-                        if index not in tool_calls_buffer:
-                            tool_calls_buffer[index] = {
-                                'id': tc.id or '',
-                                'type': tc.type or 'function',
-                                'function': {'name': '', 'arguments': ''}
-                            }
-
-                        if tc.function:
-                            if tc.function.name:
-                                tool_calls_buffer[index]['function']['name'] += tc.function.name
-                            if tc.function.arguments:
-                                tool_calls_buffer[index]['function']['arguments'] += tc.function.arguments
-
-                yield chunk
-
-            # 标记内容结束
-            if on_content:
-                on_content("", True)
-            if on_thinking:
-                on_thinking("", True)
-
-            # 如果没有标准工具调用，尝试从内容中解析（某些模型的特殊格式）
-            if not has_standard_tool_calls and content_buffer:
-                parsed_tool_calls = self._parse_tool_calls_from_content(content_buffer)
-                if parsed_tool_calls:
-                    for i, tc in enumerate(parsed_tool_calls):
-                        tool_calls_buffer[i] = tc
-
-            # 执行工具调用
-            if tool_calls_buffer:
-                for tc in tool_calls_buffer.values():
-                    func = tc['function']
-                    tool_name = func.get('name', '')
-                    arguments = func.get('arguments', '{}')
-
-                    if on_tool_call:
-                        on_tool_call(tool_name, arguments, None)
-
-                    # 执行工具
-                    try:
-                        params = json.loads(arguments) if arguments else {}
-                    except:
-                        params = {}
-
-                    result = tools.tool_executor.execute(tool_name, params)
-
-                    # 记录工具调用
-                    logger.logger.info(
-                        logger.TOOL_CALL,
-                        "工具执行: %s" % tool_name,
-                        {
-                            "tool": tool_name,
-                            "params": params,
-                            "result": result
-                        }
-                    )
-
-                    if on_tool_call:
-                        on_tool_call(tool_name, arguments, result)
-
-                    # 将工具结果返回给AI继续对话
-                    assistant_msg = {
-                        'role': 'assistant',
-                        'content': content_buffer,
-                        'tool_calls': [{'id': tc.get('id', ''), 'type': 'function', 'function': {'name': tool_name, 'arguments': arguments}}]
+            tool_call_dicts = []
+            for tc in tool_calls:
+                tool_call_dicts.append({
+                    'id': tc['id'],
+                    'type': 'function',
+                    'function': {
+                        'name': tc['name'],
+                        'arguments': json.dumps(tc['arguments'], ensure_ascii=False),
                     }
-                    # 如果是reasoning模型，添加reasoning_content字段
-                    if self.is_reasoning_model:
-                        assistant_msg['reasoning_content'] = thinking_buffer if thinking_buffer else ''
+                })
 
-                    follow_up_messages = messages + [
-                        assistant_msg,
-                        {'role': 'tool', 'tool_call_id': tc.get('id', ''), 'content': json.dumps(result)}
-                    ]
+            assistant_msg = {
+                'role': 'assistant',
+                'content': content,
+                'tool_calls': tool_call_dicts,
+            }
+            if reasoning_content:
+                assistant_msg['reasoning_content'] = reasoning_content
+            
+            full_messages.append(assistant_msg)
 
-                    # 递归调用获取AI对工具结果的响应
-                    for item in self.chat_stream(
-                        follow_up_messages,
-                        on_thinking=on_thinking,
-                        on_content=on_content,
-                        on_tool_call=on_tool_call,
-                        on_error=on_error
-                    ):
-                        yield item
-                    return
+            for tc in tool_calls:
+                tool_name = tc['name']
+                params = tc['arguments']
+                arguments_str = json.dumps(params, ensure_ascii=False)
 
-        except Exception as e:
-            error_msg = "AI请求错误: %s" % str(e)
-            logger.logger.error(logger.ERRORS, error_msg)
-            if on_error:
-                on_error(error_msg)
+                if on_tool_call:
+                    on_tool_call(tool_name, arguments_str, None)
+
+                result = tools.tool_executor.execute(tool_name, params)
+
+                logger.logger.info(
+                    logger.TOOL_CALL,
+                    "工具执行: %s" % tool_name,
+                    {
+                        "tool": tool_name,
+                        "params": params,
+                        "result": result
+                    }
+                )
+
+                if on_tool_call:
+                    on_tool_call(tool_name, arguments_str, result)
+
+                tool_response_content = result.get('message', '')
+                if result.get('output'):
+                    tool_response_content = result.get('output')
+                elif result.get('data'):
+                    tool_response_content = json.dumps(result.get('data'), ensure_ascii=False)
+                elif not tool_response_content:
+                    tool_response_content = json.dumps(result, ensure_ascii=False)
+
+                full_messages.append({
+                    'role': 'tool',
+                    'tool_call_id': tc['id'],
+                    'content': tool_response_content,
+                })
+
+        if iteration >= self.max_iterations and not final_content:
+            final_content = "已达到最大迭代次数 (%d)，任务可能未完成。" % self.max_iterations
+
+        return final_content
 
     def test_connection(self):
         """测试连接"""
         try:
-            if not self.client:
-                return False, "客户端未初始化"
+            provider_info = config.get_provider_info(self.provider)
+            requires_key = provider_info.get('requires_api_key', True)
+            
+            if not self.model:
+                return False, "请选择模型"
+            
+            if requires_key and not self.api_key:
+                return False, "请输入 API Key"
 
-            # 使用 chat.completions.create 发送简单请求测试
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{'role': 'user', 'content': 'hi'}],
-                max_tokens=5,
-                stream=False
-            )
+            model_name = self._get_model_name()
+            
+            request_params = {
+                'model': model_name,
+                'messages': [{'role': 'user', 'content': 'hi'}],
+                'max_tokens': 5,
+                'timeout': 30,
+            }
+            
+            if self.api_key:
+                request_params['api_key'] = self.api_key
+            
+            if self.api_url:
+                request_params['api_base'] = self.api_url
+            
+            if self.provider == 'azure' and self.api_version:
+                request_params['api_version'] = self.api_version
+            
+            response = completion(**request_params)
             return True, "连接成功"
+        except litellm.AuthenticationError as e:
+            return False, "认证失败: %s" % str(e)
+        except litellm.RateLimitError as e:
+            return False, "速率限制: %s" % str(e)
+        except litellm.APIError as e:
+            return False, "API错误: %s" % str(e)
         except Exception as e:
             return False, str(e)
 
 
-# 全局AI客户端实例
 ai_client = AIClient()
