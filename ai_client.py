@@ -87,7 +87,7 @@ class AIClient:
 
     def _get_system_prompt(self):
         """获取系统提示词"""
-        return """你是一个PyMOL分子可视化助手。你可以使用提供的工具来控制PyMOL软件。
+        base_prompt = """你是一个PyMOL分子可视化助手。你可以使用提供的工具来控制PyMOL软件。
 
 【重要原则】
 - 请使用与用户相同的语言进行回答（用户用中文就用中文，用户用英文就用英文）- 这是最重要的规则，必须严格遵守
@@ -125,9 +125,13 @@ class AIClient:
 - pymol_zoom: 缩放视图到指定选择
 - pymol_rotate: 旋转视图或选择（支持 x, y, z 轴）
 - pymol_center: 将视图中心移动到指定选择
-- pymol_reset: 重置视图到默认状态
-- pymol_capture_view: 捕获当前PyMOL视图的截图（仅视觉模型可用，让你能够看到实际的画面效果）
+- pymol_reset: 重置视图到默认状态"""
 
+        if self.is_vision_model:
+            base_prompt += """
+- pymol_capture_view: 捕获当前PyMOL视图的截图，让你能够看到实际的画面效果"""
+
+        base_prompt += """
 其他操作：
 - pymol_select: 创建命名的选择集（支持 chain A, resi 1-100, name CA, resn ASP, elem C 等表达式）
 - pymol_set: 设置 PyMOL 参数（如 ray_shadows, cartoon_cylindrical_helices, bg_gradient, transparency 等）
@@ -147,9 +151,13 @@ class AIClient:
 3. 调用工具后等待结果再继续
 4. 如果操作失败，尝试其他方法
 5. 如果用户询问关于分子结构的问题但没有明确提供PDB ID或文件路径，默认假设结构已经加载到PyMOL中，直接使用pymol_get_info等工具查询当前加载的结构，而不是尝试加载新结构
-6. 选择表达式语法示例：chain A, resi 1-100, name CA, resn ASP, elem C, chain A and resi 50, /1abc//A/50/CA
-7. 如果需要查看当前渲染效果，可以使用 pymol_capture_view 工具捕获截图，这样可以直观地看到画面的实际效果
-"""
+6. 选择表达式语法示例：chain A, resi 1-100, name CA, resn ASP, elem C, chain A and resi 50, /1abc//A/50/CA"""
+
+        if self.is_vision_model:
+            base_prompt += """
+7. 如果需要查看当前渲染效果，可以使用 pymol_capture_view 工具捕获截图，这样可以直观地看到画面的实际效果"""
+
+        return base_prompt
 
     def _sanitize_messages(self, messages: list[dict]) -> list[dict]:
         """清理消息格式，标准化 tool_call_id"""
@@ -222,7 +230,7 @@ class AIClient:
 
         # 工具调用：普通模型和视觉模型都支持工具调用
         if use_tools:
-            request_params['tools'] = tools.TOOLS
+            request_params['tools'] = tools.get_tool_definitions(self.is_vision_model)
             request_params['tool_choice'] = 'auto'
 
         logger.logger.debug(

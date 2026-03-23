@@ -86,6 +86,30 @@ class Logger:
             print("[PyMOL AI Assistant] 保存日志失败: {}".format(e))
             return False
     
+    def _process_image_data(self, data):
+        """
+        处理图片数据，截断过长的base64字符串
+        
+        Args:
+            data: 原始数据
+        
+        Returns:
+            处理后的数据
+        """
+        if isinstance(data, dict):
+            return {k: self._process_image_data(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._process_image_data(item) for item in data]
+        elif isinstance(data, str):
+            # 检查是否是data URL格式的图片（base64编码）
+            if len(data) > 50 and (data.startswith('data:image/') and ';base64,' in data):
+                # 只保留前5个字符作为示意
+                return f"{data[:5]}...[base64数据，总长度{len(data)}]"
+            elif len(data) > 50:
+                # 其他长字符串也截断
+                return f"{data[:50]}...[截断，总长度{len(data)}]"
+        return data
+    
     def log(self, level, category, message, data=None):
         """
         记录日志
@@ -106,9 +130,11 @@ class Logger:
         if data is not None:
             # 序列化数据，避免无法JSON序列化的对象
             try:
+                # 处理图片数据，截断过长的base64字符串
+                processed_data = self._process_image_data(data)
                 # 尝试序列化，如果失败则转为字符串
-                json.dumps(data)
-                entry['data'] = data
+                json.dumps(processed_data)
+                entry['data'] = processed_data
             except:
                 entry['data'] = str(data)
         

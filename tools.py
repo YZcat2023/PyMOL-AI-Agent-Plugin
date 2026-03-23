@@ -47,11 +47,14 @@ def supports_parallel_function_calling(model: str) -> bool:
         return False
 
 
-def get_tool_definitions() -> List[Dict[str, Any]]:
+def get_tool_definitions(is_vision_model: bool = False) -> List[Dict[str, Any]]:
     """
     获取所有工具的定义（用于 OpenAI Function Calling）
+    
+    Args:
+        is_vision_model: 是否为视觉模型，如果是则包含截图工具
     """
-    return [
+    tools = [
         {
             "type": "function",
             "function": {
@@ -922,12 +925,15 @@ png protein.png, dpi=300, ray=1
                     "required": ["setting", "value"]
                 }
             }
-        },
-        {
+        }
+    ]
+    
+    if is_vision_model:
+        tools.append({
             "type": "function",
             "function": {
                 "name": "pymol_capture_view",
-                "description": "捕获当前PyMOL视图的截图。此工具仅在使用视觉模型时可用，返回当前渲染画面的base64编码图片数据，让AI能够看到实际的画面效果。",
+                "description": "捕获当前PyMOL视图的截图。返回当前渲染画面的base64编码图片数据，让你能够看到实际的画面效果。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -950,8 +956,9 @@ png protein.png, dpi=300, ray=1
                     "required": []
                 }
             }
-        }
-    ]
+        })
+    
+    return tools
 
 
 class ToolExecutor:
