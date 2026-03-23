@@ -17,7 +17,7 @@ import sys
 import os
 
 # 版本号
-__version__ = '3.0.2'
+__version__ = '3.0.3'
 
 # 获取插件目录
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +41,7 @@ def check_and_install_dependencies():
         'PyQt5': 'PyQt5',
         'litellm': 'litellm',
         'json_repair': 'json-repair',
+        'markdown': 'markdown',
     }
 
     missing_packages = []
