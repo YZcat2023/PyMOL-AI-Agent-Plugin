@@ -29,7 +29,7 @@ class MarkdownRenderer:
     def _apply_dark_theme(html):
         """为HTML应用深色主题样式"""
         replacements = {
-            '<table>': '<table style="border-collapse: collapse; margin: 12px 0; width: 100%;">',
+            '<table>': '<table style="border-collapse: collapse; margin: 12px 0; width: 100%; border: 1px solid #555555;">',
             '<thead>': '<thead>',
             '<tbody>': '<tbody>',
             '<tr>': '<tr>',

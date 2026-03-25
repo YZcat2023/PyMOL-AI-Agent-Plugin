@@ -10,7 +10,10 @@ PyMOL 工具集
 import os
 import json
 import traceback
+import sys
+import tempfile
 from typing import Dict, List, Any, Optional, Callable
+from io import StringIO
 import litellm
 from . import logger
 
@@ -104,231 +107,41 @@ def get_tool_definitions(is_vision_model: bool = False) -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "pymol_run_script",
-                "description": """执行 Python 脚本文件（.py 或 .pym）。脚本可以访问 PyMOL 的所有内置功能和 API。
+                "name": "pymol_write_script",
+                "description": """在临时文件夹中创建脚本文件，支持 Python (.py) 和 PyMOL 命令脚本 (.pml) 两种格式。
 
-【支持的脚本类型】
-- .py - 标准 Python 脚本
-- .pym - PyMOL Python 脚本（与 .py 相同，只是扩展名不同）
+【脚本类型选择】
+1. Python 脚本 (.py):
+   - 需要执行复杂的 PyMOL 操作
+   - 需要使用 Python 的循环、条件判断等编程结构
+   - 需要自定义函数进行批量处理
+   - 需要从脚本中返回计算结果给 AI
 
-【命名空间选项】
-- global (默认): 在 PyMOL 全局命名空间中运行，脚本可以访问所有 PyMOL 内部对象和变量
-- local: 在 PyMOL 局部命名空间中运行，局部变量隔离
-- main: 在 Python 主模块命名空间中运行
-- module: 作为独立 Python 模块运行，有独立的 __file__ 和 __script__ 变量
-- private: 私有命名空间，局部变量完全隔离，安全性最高
+2. PyMOL 命令脚本 (.pml):
+   - 快速执行一系列 PyMOL 命令
+   - 不需要复杂的逻辑控制
+   - 简单的加载、显示、着色操作
 
-【脚本可访问的内置对象】
-- cmd - PyMOL 命令模块，包含所有 PyMOL 命令:
-  - 结构操作: cmd.load(), cmd.save(), cmd.fetch(), cmd.remove()
-  - 显示控制: cmd.show(), cmd.hide(), cmd.color(), cmd.zoom()
-  - 选择操作: cmd.select(), cmd.get_names(), cmd.count_atoms()
-  - 信息获取: cmd.get_model(), cmd.get_chains(), cmd.get_residues()
-  - 修改操作: cmd.alter(), cmd.alter_state(), cmd.iterate()
-- stored - 临时存储对象，用于在 iterate/alter 命令中传递数据
-  - 示例: stored.coords = []; cmd.iterate_state(1, "all", "stored.coords.append([x,y,z])")
-- __script__ - 当前脚本文件的完整路径
-
-【脚本示例】
+【Python 脚本示例】
 ```python
-# 获取所有CA原子的坐标
-from pymol import stored
-stored.coords = []
-cmd.iterate_state(1, "name CA", "stored.coords.append([x,y,z])")
-print(f"共有 {len(stored.coords)} 个CA原子")
+from pymol import cmd, stored
 
-# 修改B-factor
-cmd.alter("all", "b=50.0")
-cmd.rebuild()
+# 收集CA原子坐标
+stored.ca_coords = []
+cmd.iterate("name CA", "stored.ca_coords.append([x,y,z])")
 
-# 创建自定义函数并注册为命令
-def my_function(selection="all"):
-    count = cmd.count_atoms(selection)
-    print(f"选择集 {selection} 包含 {count} 个原子")
-    return count
+# 输出结果
+print(f"共有 {len(stored.ca_coords)} 个CA原子")
+print("坐标列表:")
+for i, coord in enumerate(stored.ca_coords[:5]):
+    print(f"  CA{i+1}: ({coord[0]:.2f}, {coord[1]:.2f}, {coord[2]:.2f})")
 
-# 注册为 PyMOL 命令
-cmd.extend("my_function", my_function)
+# 计算表面积
+area = cmd.get_area()
+print(f"分子表面积: {area:.2f} Å²")
 ```
 
-【注意事项】
-- 使用 global 命名空间时，脚本可以访问和修改 PyMOL 的所有内部状态
-- 对于不信任的脚本，建议使用 module 或 private 命名空间以提高安全性
-- 脚本中的错误会显示在 PyMOL 的反馈窗口中""",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "filename": {
-                            "type": "string",
-                            "description": "Python 脚本文件路径（.py 或 .pym）"
-                        },
-                        "namespace": {
-                            "type": "string",
-                            "description": "脚本运行的命名空间: global(默认，访问所有PyMOL对象), local(局部隔离), main(主模块), module(独立模块), private(完全隔离)",
-                            "enum": ["global", "local", "main", "module", "private"],
-                            "default": "global"
-                        }
-                    },
-                    "required": ["filename"]
-                }
-            }
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "pymol_run_pml",
-                "description": '''执行 PyMOL 脚本文件（.pml）。这是 PyMOL 的命令脚本格式。
-
-可用命令分类：
-
-【文件加载】
-- load [文件名], [对象名], [格式] - 加载本地文件（pdb, cif, mol2, sdf等）
-- fetch [PDB码], [对象名] - 从PDB数据库下载结构
-- run [脚本文件] - 执行Python脚本
-- @ [pml脚本文件] - 执行PyMOL命令脚本
-
-【显示控制】
-- show [表示形式], [选择] - 显示指定表示形式
-  表示形式: lines, sticks, spheres, surface, mesh, ribbon, cartoon, dots, labels, nonbonded, everything
-  示例: show cartoon, chain A
-- hide [表示形式], [选择] - 隐藏指定表示形式
-  示例: hide sticks, all
-- enable [对象名] - 启用对象
-- disable [对象名] - 禁用对象
-
-【颜色设置】
-- color [颜色], [选择] - 设置选择区域颜色
-  颜色: red, green, blue, yellow, cyan, magenta, white, black, gray, orange, purple, pink
-  特殊: rainbow（彩虹色）, ss（按二级结构）, by_chain（按链）, by_resi（按残基）, by_element（按元素）
-  示例: color red, chain A; color rainbow, all
-- bg_color [颜色] - 设置背景颜色
-  示例: bg_color white
-- set_color [颜色名], [RGB值] - 定义新颜色
-  示例: set_color mycolor, [0.5, 0.8, 0.2]
-- AlphaFold Color
-当需要用颜色展示AF预测结构的准确度（pLDDT）时，使用以下：
-set_color n0, [0.051, 0.341, 0.827]
-set_color n1, [0.416, 0.796, 0.945]
-set_color n2, [0.996, 0.851, 0.212]
-set_color n3, [0.992, 0.490, 0.302]
-color n0, b < 100; color n1, b < 90
-color n2, b < 70;  color n3, b < 50
-- RosettaFold Color
-当需要展示RosettaFold准确度时，用以下命令：
-spectrum b, red_yellow_green_cyan_blue, minimum=0.5, maximum=0.9
-
-【视图控制】
-- zoom [选择], [缓冲], [状态] - 缩放到指定选择
-  示例: zoom; zoom chain A, buffer=2
-- center [选择] - 将视图中心移动到指定选择
-  示例: center chain A
-- reset - 重置视图到默认状态
-- orient - 沿主轴对齐结构
-- clip [near], [far] - 设置裁剪平面
-  示例: clip near=-5, far=20
-
-【旋转和移动】
-- rotate [轴], [角度], [选择] - 旋转
-  轴: x, y, z
-  示例: rotate x, 30, chain A
-- turn [轴], [角度] - 旋转相机
-  示例: turn y, 45
-- move [x], [y], [z], [选择] - 移动原子
-  示例: move 5, 0, 0, chain A
-- translate [x], [y], [z], [选择] - 平移选择
-  示例: translate 10, 0, 0, all
-
-【选择操作】
-- select [名称], [选择表达式] - 创建命名选择集
-  选择表达式语法：
-  - chain [链ID]: chain A, chain B
-  - resi [残基号]: resi 50, resi 1-100
-  - resn [残基名]: resn ASP, resn HIS
-  - name [原子名]: name CA, name N+O
-  - elem [元素]: elem C, elem O+N
-  - byres(选择): 按残基选择
-  - bychain(选择): 按链选择
-  - within [距离] of [选择]: 在指定距离内
-  - around [距离]: 周围指定距离
-  - and, or, not: 逻辑运算符
-  示例: select active_site, resi 50-60; select heme, resn HEM
-- deselect - 取消所有选择
-- pop [名称], [源选择] - 遍历选择中的原子
-
-【测量】
-- distance [名称], [选择1], [选择2] - 测量距离
-  示例: distance d1, /1abc//A/50/CA, /1abc//A/100/CA
-- angle [名称], [选择1], [选择2], [选择3] - 测量角度
-- dihedral [名称], [选择1], [选择2], [选择3], [选择4] - 测量二面角
-- get_distance [选择1], [选择2] - 获取距离值
-- get_angle [选择1], [选择2], [选择3] - 获取角度值
-- get_dihedral [选择1], [选择2], [选择3], [选择4] - 获取二面角值
-
-【结构操作】
-- remove [选择] - 删除原子
-  示例: remove water; remove solvent
-- delete [对象或选择名] - 删除对象或选择
-- alter [选择], [表达式] - 修改原子属性
-  示例: alter chain A and resi 50, b=50.0
-- alter_state [状态], [选择], [表达式] - 修改指定状态的原子属性
-- replace [选择], [残基名] - 替换残基
-- attach [片段], [氢] - 添加片段
-- h_add [选择] - 添加氢原子
-- h_fill [选择] - 填充氢原子
-- h_fix [选择] - 修复氢原子
-- unbond [选择1], [选择2] - 断开键
-- bond [选择1], [选择2] - 创建键
-- fuse [选择1], [选择2] - 融合选择
-
-【结构分析】
-- dss - 计算二级结构
-- identify [选择] - 识别原子
-- get_model [选择] - 获取分子模型
-- get_extent [选择] - 获取范围
-- count_atoms [选择] - 统计原子数
-- get_chains [选择] - 获取链列表
-
-【对齐和拟合】
-- align [移动], [目标] - 序列/结构对齐
-  示例: align 1abc, 2def
-- fit [移动], [目标] - 拟合结构
-- pair_fit [移动1], [目标1], [移动2], [目标2] - 成对拟合
-- rms [选择1], [选择2] - 计算RMSD
-- super [选择1], [选择2] - 超级对齐
-
-【渲染和导出】
-- ray [宽], [高] - 光线追踪渲染
-  示例: ray 1600, 1200
-- png [文件名], [dpi], [ray] - 保存PNG图像
-  示例: png image.png, dpi=300, ray=1
-- save [文件名], [格式], [选择] - 保存结构
-  格式: pdb, mae, sdf等
-  示例: save output.pdb
-- save session [文件名] - 保存会话
-
-【设置】
-- set [设置名], [值], [选择] - 设置参数
-  常用设置:
-  - ray_shadows: on/off - 阴影
-  - cartoon_tube_radius: 数值 - 管状半径
-  - cartoon_cylindrical_helices: on/off - 圆柱螺旋
-  - bg_gradient: on/off, 颜色1, 颜色2 - 背景渐变
-  - transparency: 0-1 - 透明度
-  - sphere_scale: 数值 - 球体大小
-  示例: set ray_shadows, on; set transparency, 0.5
-- unset [设置名] - 取消设置
-
-【其他】
-- cls - 清屏
-- help [命令名] - 显示帮助
-- quit - 退出
-- refresh - 刷新显示
-- rebuild - 重建显示
-- stereo on/off - 立体模式
-- undo - 撤销
-- redo - 重做
-
-PML脚本示例：
+【PyMOL 命令脚本 (.pml) 示例】
 ```pml
 # 加载结构
 fetch 1ake, protein
@@ -340,22 +153,99 @@ show cartoon
 color red, chain A
 color blue, chain B
 
-# 添加氢原子
-h_add
-
 # 计算二级结构
 dss
 
-# 缩放并保存
+# 缩放
 zoom
-png protein.png, dpi=300, ray=1
-```''',
+```
+
+【pml 命令参考】
+- load [文件名], [对象名], [格式] - 加载本地文件
+- fetch [PDB码], [对象名] - 从PDB数据库下载结构
+- show [表示形式], [选择] - 显示表示形式（cartoon, sticks, surface等）
+- hide [表示形式], [选择] - 隐藏表示形式
+- color [颜色], [选择] - 设置颜色（支持 rainbow, by_chain, by_ss 等特殊模式）
+- bg_color [颜色] - 设置背景颜色
+- zoom [选择], [缓冲] - 缩放视图
+- center [选择] - 将视图中心移动到指定选择
+- select [名称], [选择表达式] - 创建选择集
+- distance/angle/dihedral - 测量距离、角度、二面角
+- ray [宽], [高] - 光线追踪渲染
+- png [文件名], [dpi], [ray] - 保存PNG图像
+- set [参数], [值] - 设置 PyMOL 参数
+
+【注意事项】
+- 脚本保存到临时文件夹，文件名包含时间戳
+- Python 脚本中的 print 输出会被捕获并返回给 AI
+- pml 脚本使用 cmd.do() 执行，输出也会被捕获
+- 使用 pymol_run_script 来执行创建的脚本""",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "脚本代码内容"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "脚本名称（可选，用于标识，默认使用时间戳）"
+                        },
+                        "script_type": {
+                            "type": "string",
+                            "description": "脚本类型: python (默认，Python脚本) 或 pml (PyMOL命令脚本)",
+                            "enum": ["python", "pml"],
+                            "default": "python"
+                        }
+                    },
+                    "required": ["code"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "pymol_run_script",
+                "description": """执行 Python 脚本文件（.py 或 .pym）。
+
+【命名空间选项】
+- global (默认): 在 PyMOL 全局命名空间中运行
+- local: 在 PyMOL 局部命名空间中运行
+- main: 在 Python 主模块命名空间中运行
+- module: 作为独立 Python 模块运行
+- private: 私有命名空间，局部变量完全隔离
+
+【脚本输出捕获】
+脚本中的所有 print 输出都会被捕获并返回给 AI，让 AI 能够了解执行结果。
+
+【使用建议】
+1. 先使用 pymol_write_script 创建脚本文件
+2. 然后使用 pymol_run_script 执行脚本
+3. 脚本中的 print 输出会被返回给 AI
+
+【示例】
+```python
+# 使用 pymol_write_script 创建脚本：
+from pymol import cmd, stored
+
+stored.coords = []
+cmd.iterate("name CA", "stored.coords.append([x,y,z])")
+print(f"共有 {len(stored.coords)} 个CA原子")
+
+# 然后使用 pymol_run_script 执行
+```""",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "filename": {
                             "type": "string",
-                            "description": "PyMOL 脚本文件路径（.pml）"
+                            "description": "Python 脚本文件路径（.py 或 .pym）"
+                        },
+                        "namespace": {
+                            "type": "string",
+                            "description": "脚本运行的命名空间: global(默认), local, main, module, private",
+                            "enum": ["global", "local", "main", "module", "private"],
+                            "default": "global"
                         }
                     },
                     "required": ["filename"]
@@ -1081,7 +971,7 @@ class ToolExecutor:
     
     def _execute_tool(self, cmd, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """实际执行工具的辅助方法"""
-        
+        import tempfile, os, sys
         if tool_name == "pymol_fetch":
             code = arguments.get("code", "")
             name = arguments.get("name", "")
@@ -1160,6 +1050,54 @@ class ToolExecutor:
                     "output": feedback_text if feedback_text else str(e)
                 }
 
+        elif tool_name == "pymol_write_script":
+            code = arguments.get("code", "")
+            name = arguments.get("name", "")
+            script_type = arguments.get("script_type", "python")
+
+            if not code:
+                return {
+                    "success": False,
+                    "message": "错误: 未指定脚本代码"
+                }
+
+            try:
+                import time
+                timestamp = int(time.time() * 1000)
+
+                if name:
+                    script_name = f"{name}_{timestamp}"
+                else:
+                    script_name = f"pymol_script_{timestamp}"
+
+                # 根据脚本类型确定文件扩展名
+                if script_type == "pml":
+                    file_ext = ".pml"
+                    type_display = "PyMOL"
+                else:
+                    file_ext = ".py"
+                    type_display = "Python"
+
+
+                temp_dir = tempfile.gettempdir()
+                script_path = os.path.join(temp_dir, f"{script_name}{file_ext}")
+
+                with open(script_path, 'w', encoding='utf-8') as f:
+                    f.write(code)
+
+                return {
+                    "success": True,
+                    "message": f"{type_display}脚本已创建: {script_path}",
+                    "path": script_path,
+                    "filename": script_name + file_ext,
+                    "script_type": script_type
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "message": f"创建脚本失败: {str(e)}"
+                }
+
         elif tool_name == "pymol_run_script":
             filename = arguments.get("filename", "")
             namespace = arguments.get("namespace", "global")
@@ -1186,57 +1124,94 @@ class ToolExecutor:
 
             # 检查文件扩展名
             _, ext = os.path.splitext(expanded_path.lower())
-            if ext not in ['.py', '.pym']:
+            if ext not in ['.py', '.pym', '.pml']:
                 return {
                     "success": False,
-                    "message": f"不支持的脚本类型: {ext}。只支持 .py 和 .pym 文件"
+                    "message": f"不支持的脚本类型: {ext}。只支持 .py, .pym 和 .pml 文件"
                 }
 
             # 清除之前的反馈
             cmd._get_feedback()
 
-            try:
-                # 执行脚本
-                cmd.run(expanded_path, namespace=namespace)
+            # 捕获标准输出
+            old_stdout = sys.stdout
+            captured_output = StringIO()
 
-                # 获取执行反馈
+            try:
+                sys.stdout = captured_output
+
+                # 根据文件类型执行
+                if ext == '.pml':
+                    # 读取 pml 文件内容并使用 cmd.do 执行
+                    with open(expanded_path, 'r', encoding='utf-8') as f:
+                        pml_content = f.read()
+                    cmd.do(pml_content)
+                    script_type = "PyMOL"
+                else:
+                    # Python 脚本使用 cmd.run 执行
+                    cmd.run(expanded_path, namespace=namespace)
+                    script_type = "Python"
+
+                # 恢复标准输出
+                sys.stdout = old_stdout
+
+                # 获取捕获的输出
+                script_output = captured_output.getvalue()
+
+                # 获取 PyMOL 反馈
                 feedback = cmd._get_feedback()
                 feedback_text = "\n".join(feedback) if feedback else ""
 
+                # 合并输出
+                combined_output = ""
+                if script_output:
+                    combined_output += script_output
+                if feedback_text:
+                    if combined_output:
+                        combined_output += "\n\n"
+                    combined_output += feedback_text
+
                 # 检查是否有错误
+                has_error = False
                 if feedback_text and ("Error" in feedback_text or "error" in feedback_text.lower() or "Traceback" in feedback_text):
+                    has_error = True
+
+                if has_error:
                     return {
                         "success": False,
-                        "message": f"脚本执行出错: {filename}",
-                        "details": feedback_text[:500]  # 限制错误信息长度
+                        "message": f"脚本执行出错: {os.path.basename(filename)}",
+                        "output": combined_output,
+                        "error": feedback_text[:500] if feedback_text else ""
                     }
+
+                # 根据脚本类型返回不同的消息
+                if ext == '.pml':
+                    message = f"成功执行 PyMOL 脚本: {os.path.basename(filename)}"
+                else:
+                    message = f"成功执行 Python 脚本: {os.path.basename(filename)} (namespace: {namespace})"
 
                 return {
                     "success": True,
-                    "message": f"成功执行 Python 脚本: {os.path.basename(filename)} (namespace: {namespace})",
-                    "feedback": feedback_text[:200] if feedback_text else "脚本执行完成"
+                    "message": message,
+                    "output": combined_output
                 }
 
             except Exception as e:
+                # 确保恢复标准输出
+                sys.stdout = old_stdout
+
+                # 获取捕获的输出（如果有）
+                script_output = captured_output.getvalue()
+
+                error_msg = f"执行脚本失败: {str(e)}"
+                tb = traceback.format_exc()
+
                 return {
                     "success": False,
-                    "message": f"执行脚本失败: {str(e)}"
+                    "message": error_msg,
+                    "output": script_output if script_output else "",
+                    "error": tb
                 }
-
-        elif tool_name == "pymol_run_pml":
-            filename = arguments.get("filename", "")
-
-            if not os.path.exists(filename):
-                return {
-                    "success": False,
-                    "message": f"脚本文件不存在: {filename}"
-                }
-
-            cmd.do(f"@{filename}")
-            return {
-                "success": True,
-                "message": f"已执行 PyMOL 脚本: {filename}"
-            }
 
         elif tool_name == "pymol_do_command":
             commands = arguments.get("commands", [])
