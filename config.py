@@ -233,7 +233,7 @@ def create_default_config(name, provider_id="openai"):
         "is_reasoning_model": False,
         "is_vision_model": False,
         "temperature": 0.7,
-        "max_tokens": 200000,
+        "max_tokens": 8000,
         "timeout": 60,
     }
 
@@ -284,7 +284,7 @@ class ConfigManager:
             if "temperature" not in config:
                 config["temperature"] = 0.7
             if "max_tokens" not in config:
-                config["max_tokens"] = 200000
+                config["max_tokens"] = 8000
             if "timeout" not in config:
                 config["timeout"] = 60
 

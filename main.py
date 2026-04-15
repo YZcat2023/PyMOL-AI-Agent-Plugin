@@ -1131,9 +1131,9 @@ class ConfigWidget(QtWidgets.QWidget):
         self.labels["tokens_label"] = QtWidgets.QLabel(i18n._("max_tokens"))
         self.labels["tokens_label"].setStyleSheet("color: #AAAAAA; font-size: 12px;")
         self.max_tokens_spin = QtWidgets.QSpinBox()
-        self.max_tokens_spin.setRange(100, 200000)
+        self.max_tokens_spin.setRange(100, 8192)
         self.max_tokens_spin.setSingleStep(100)
-        self.max_tokens_spin.setValue(200000)
+        self.max_tokens_spin.setValue(8000)
         self.max_tokens_spin.setStyleSheet(spin_style)
         advanced_layout.addWidget(self.labels["tokens_label"], 1, 0)
         advanced_layout.addWidget(self.max_tokens_spin, 1, 1)
@@ -1280,7 +1280,7 @@ class ConfigWidget(QtWidgets.QWidget):
         self.reasoning_checkbox.setChecked(cfg.get("is_reasoning_model", False))
         self.vision_checkbox.setChecked(cfg.get("is_vision_model", False))
         self.temp_spin.setValue(cfg.get("temperature", 0.7))
-        self.max_tokens_spin.setValue(cfg.get("max_tokens", 200000))
+        self.max_tokens_spin.setValue(cfg.get("max_tokens", 8000))
         self.timeout_spin.setValue(cfg.get("timeout", 60))
 
         current = config.config_manager.get_current_config()
@@ -1300,7 +1300,7 @@ class ConfigWidget(QtWidgets.QWidget):
         self.vision_checkbox.setChecked(False)
         self.current_checkbox.setChecked(False)
         self.temp_spin.setValue(0.7)
-        self.max_tokens_spin.setValue(200000)
+        self.max_tokens_spin.setValue(8000)
         self.timeout_spin.setValue(60)
 
     def on_new(self):
