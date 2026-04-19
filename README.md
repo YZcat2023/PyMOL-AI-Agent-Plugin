@@ -29,7 +29,7 @@ Thinking mode: Thinking content is collapsed by default when using thinking mode
 > 
 > [简体中文](README_zh.md) | **English** (Current)
 
-![Main Interface](fig/Screenshot 2026-04-19 205106.png)
+![Main Interface](fig/9.png)
 
 As shown in the screenshot, you only need to describe your needs in everyday language, and the AI will directly control PyMOL to complete complex molecular visualization tasks.
 
