@@ -1,6 +1,8 @@
+
 # -*- coding: utf-8 -*-
 """
 主模块 - 包含AI助手对话框主界面（深色主题）
+全局字体：OPPOSans
 """
 
 import os
@@ -48,8 +50,50 @@ COLORS = {
     "accent_red": "#E74C3C",
     "border": "#555555",
 }
+# import os
+# # print("当前可执行文件路径:", os.path.abspath(__file__))
+# # 获取当前文件所在目录
+# PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# # 字体文件路径（同一级文件夹）
+# FONT_PATH = os.path.join(PLUGIN_DIR, "OPPOSans-Medium.ttf")
+# # print("字体文件路径:", FONT_PATH)
 
+# # 检查字体是否存在
+# if os.path.exists(FONT_PATH):
+#     GLOBAL_FONT = FONT_PATH
+#     # print("字体文件存在:", FONT_PATH)
+# else:
+#     GLOBAL_FONT = None
+# 全局字体设置
+# GLOBAL_FONT = "OPPO Sans Medium"
+def init_custom_font():
+    """
+    初始化自定义字体（在插件启动时调用一次）
+    从插件目录加载 OPPOSans-Medium.ttf
+    """
+    global GLOBAL_FONT
+    
+    # 获取插件目录
+    plugin_dir = os.path.dirname(os.path.abspath(__file__))
+    font_path = os.path.join(plugin_dir, "OPPOSans-Medium.ttf")
+    
+    # 也检查一下大小写变体
+    if not os.path.exists(font_path):
+        font_path = os.path.join(plugin_dir, "OPPOSansMedium.ttf")
+    
+    if os.path.exists(font_path):
+        font_id = QtGui.QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            families = QtGui.QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                GLOBAL_FONT = families[0]
+                return GLOBAL_FONT
+    
+    # Fallback 到系统字体
+    GLOBAL_FONT = None
+    return None
+init_custom_font()
 class StyledButton(QtWidgets.QPushButton):
     """自定义样式按钮"""
 
@@ -62,8 +106,8 @@ class StyledButton(QtWidgets.QPushButton):
 
     def update_style(self):
         if self.danger:
-            self.setStyleSheet("""
-                QPushButton {
+            self.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #E74C3C;
                     color: #FFFFFF;
                     border: none;
@@ -71,21 +115,22 @@ class StyledButton(QtWidgets.QPushButton):
                     padding: 10px 30px;
                     font-size: 14px;
                     font-weight: bold;
-                }
-                QPushButton:hover {
+                    font-family: "{GLOBAL_FONT}";
+                }}
+                QPushButton:hover {{
                     background-color: #C0392B;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #A93226;
-                }
-                QPushButton:disabled {
+                }}
+                QPushButton:disabled {{
                     background-color: #555555;
                     color: #888888;
-                }
+                }}
             """)
         elif self.accent:
-            self.setStyleSheet("""
-                QPushButton {
+            self.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #5DADE2;
                     color: #2D2D2D;
                     border: none;
@@ -93,35 +138,38 @@ class StyledButton(QtWidgets.QPushButton):
                     padding: 10px 30px;
                     font-size: 14px;
                     font-weight: bold;
-                }
-                QPushButton:hover {
+                    font-family: "{GLOBAL_FONT}";
+                }}
+                QPushButton:hover {{
                     background-color: #76C5F0;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #4A9BC4;
-                }
-                QPushButton:disabled {
+                }}
+                QPushButton:disabled {{
                     background-color: #555555;
                     color: #888888;
-                }
+                }}
             """)
         else:
-            self.setStyleSheet("""
-                QPushButton {
+            self.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #404040;
                     color: #FFFFFF;
                     border: 1px solid #555555;
                     border-radius: 15px;
                     padding: 8px 20px;
                     font-size: 13px;
-                }
-                QPushButton:hover {
+                    font-family: "{GLOBAL_FONT}";
+                }}
+                QPushButton:hover {{
                     background-color: #555555;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #2D2D2D;
-                }
+                }}
             """)
+
 
 
 class MessageWidget(QtWidgets.QFrame):
@@ -144,6 +192,8 @@ class MessageWidget(QtWidgets.QFrame):
         self.tool_params = tool_params
         self.tool_name = tool_name
         self.tool_result = tool_result
+        # self.is_collapsed = False  # 折叠状态
+        self.is_collapsed = True if role == "thinking" else False  # thinking 默认折叠
         self.setObjectName("messageWidget")
         self.setup_ui()
         self.set_content(content, self.images)
@@ -156,6 +206,10 @@ class MessageWidget(QtWidgets.QFrame):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(8)
         layout.setContentsMargins(15, 12, 15, 12)
+
+        # 角色标签区域（包含折叠按钮）
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.setSpacing(8)
 
         # 角色标签
         role_text = {
@@ -186,9 +240,35 @@ class MessageWidget(QtWidgets.QFrame):
             self.bg_color = COLORS["bg_panel"]
 
         self.role_label.setStyleSheet(
-            "color: %s; font-size: 14px; background: transparent;" % role_color
+            f"color: {role_color}; font-size: 14px; background: transparent; font-family: '{GLOBAL_FONT}';"
         )
-        layout.addWidget(self.role_label)
+        header_layout.addWidget(self.role_label)
+
+        # 为 thinking 角色添加折叠按钮
+        if self.role == "thinking":
+            header_layout.addStretch()
+            self.collapse_btn = QtWidgets.QPushButton("▼")
+            self.collapse_btn.setFixedSize(20, 20)
+            self.collapse_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+            self.collapse_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    color: #CCCCCC;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 12px;
+                    font-weight: bold;
+                    font-family: "{GLOBAL_FONT}";
+                }}
+                QPushButton:hover {{
+                    background-color: #555555;
+                    color: #FFFFFF;
+                }}
+            """)
+            self.collapse_btn.clicked.connect(self.toggle_collapse)
+            header_layout.addWidget(self.collapse_btn)
+
+        layout.addLayout(header_layout)
 
         # 图片显示区域
         self.image_container = QtWidgets.QWidget()
@@ -198,6 +278,12 @@ class MessageWidget(QtWidgets.QFrame):
         self.image_container.hide()
         layout.addWidget(self.image_container)
 
+        # 内容容器（用于折叠控制）
+        self.content_container = QtWidgets.QWidget()
+        content_container_layout = QtWidgets.QVBoxLayout(self.content_container)
+        content_container_layout.setSpacing(8)
+        content_container_layout.setContentsMargins(0, 0, 0, 0)
+
         # 内容标签 - 设置为可复制
         self.content_label = QtWidgets.QLabel()
         self.content_label.setWordWrap(True)
@@ -206,46 +292,141 @@ class MessageWidget(QtWidgets.QFrame):
             QtCore.Qt.TextSelectableByMouse | QtCore.Qt.TextSelectableByKeyboard
         )
         self.content_label.setCursor(QtGui.QCursor(QtCore.Qt.IBeamCursor))
-        self.content_label.setStyleSheet("""
-            QLabel {
+        self.content_label.setStyleSheet(f"""
+            QLabel {{
                 color: #FFFFFF;
                 font-size: 14px;
                 line-height: 1.6;
                 background: transparent;
-            }
-            QLabel::item:selected {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QLabel::item:selected {{
                 background-color: #3d8bfd;
-            }
+            }}
         """)
-        layout.addWidget(self.content_label)
+        content_container_layout.addWidget(self.content_label)
 
+        # 工具调用相关的折叠部分
         if self.role in ["tool", "tool_result", "tool_error"]:
+            # 处理 tool 参数的显示
+            display_params = self.tool_params
+            if self.tool_params and isinstance(self.tool_params, str):
+                if self.tool_params.startswith("{\"commands\": "):
+                    display_params = self.tool_params[14:]
+                elif self.tool_params.startswith("{"):
+                    display_params = self.tool_params[1:]
+                if display_params:
+                    display_params = display_params.replace("\"}", "")
+                    display_params = display_params.replace("\\n", "\n")
             self._create_collapsible_section(
-                layout,
+                content_container_layout,
                 "params",
                 i18n._("show_params"),
                 i18n._("hide_params"),
-                self.tool_params,
+                display_params,
             )
             self._create_collapsible_section(
-                layout,
+                content_container_layout,
                 "result",
                 i18n._("show_result"),
                 i18n._("hide_result"),
                 self.tool_result,
             )
 
-        # 设置背景 - 使用palette而不是stylesheet
+        # 折叠时显示的摘要标签（仅 thinking 角色）
+        if self.role == "thinking":
+            self.summary_label = QtWidgets.QLabel()
+            self.summary_label.setWordWrap(True)
+            self.summary_label.setStyleSheet(f"""
+                QLabel {{
+                    color: #888888;
+                    font-size: 12px;
+                    background: transparent;
+                    font-family: "{GLOBAL_FONT}";
+                    font-style: italic;
+                }}
+            """)
+            self.summary_label.hide()
+            content_container_layout.addWidget(self.summary_label)
+
+        layout.addWidget(self.content_container)
+        if self.role == "thinking" and self.is_collapsed:
+            # 初始化为折叠状态
+            self.content_label.hide()
+            if hasattr(self, 'summary_label') and self.summary_label:
+                self.summary_label.show()
+            if hasattr(self, 'collapse_btn'):
+                self.collapse_btn.setText("▶")
+            self.role_label.setStyleSheet(
+                f"color: {COLORS['accent_yellow']}; font-size: 14px; background: transparent; font-family: '{GLOBAL_FONT}'; opacity: 0.7;"
+            )
+        # 设置背景
         self.setStyleSheet(
-            """
-            #messageWidget {
-                background-color: %s;
+            f"""
+            #messageWidget {{
+                background-color: {self.bg_color};
                 border: none;
                 border-radius: 12px;
-            }
+            }}
         """
-            % self.bg_color
         )
+    
+    def toggle_collapse(self):
+        """切换折叠/展开状态"""
+        self.is_collapsed = not self.is_collapsed
+
+        if self.is_collapsed:
+            # 折叠：隐藏完整内容，显示摘要
+            self.content_label.hide()
+
+            # 隐藏工具相关的折叠部分（如果有）
+            for child in self.content_container.findChildren(QtWidgets.QWidget):
+                if child != self.summary_label and child != self.content_label:
+                    child.hide()
+
+            # 显示摘要
+            if hasattr(self, 'summary_label') and self.summary_label:
+                self.summary_label.show()
+
+            # 更新按钮图标
+            if hasattr(self, 'collapse_btn'):
+                self.collapse_btn.setText("▶")
+
+            # 更新角色标签样式
+            self.role_label.setStyleSheet(
+                f"color: {COLORS['accent_yellow']}; font-size: 14px; background: transparent; font-family: '{GLOBAL_FONT}'; opacity: 0.7;"
+            )
+        else:
+            # 展开：显示完整内容
+            self.content_label.show()
+
+            # 显示工具相关的折叠部分（如果有）
+            for child in self.content_container.findChildren(QtWidgets.QWidget):
+                if child != self.summary_label and child != self.content_label:
+                    child.show()
+
+            # 隐藏摘要
+            if hasattr(self, 'summary_label') and self.summary_label:
+                self.summary_label.hide()
+
+            # 更新按钮图标
+            if hasattr(self, 'collapse_btn'):
+                self.collapse_btn.setText("▼")
+
+            # 恢复角色标签样式
+            self.role_label.setStyleSheet(
+                f"color: {COLORS['accent_yellow']}; font-size: 14px; background: transparent; font-family: '{GLOBAL_FONT}';"
+            )
+
+        # 调整大小
+        self.adjustSize()
+        # 触发父容器重新布局
+        if self.parent():
+            parent_container = self.parent()
+            while parent_container and not isinstance(parent_container, QtWidgets.QScrollArea):
+                parent_container = parent_container.parent()
+            if parent_container and isinstance(parent_container, QtWidgets.QScrollArea):
+                parent_container.updateGeometry()
 
     def set_content(self, content, images=None):
         """设置内容，支持不同颜色的文本和Markdown渲染"""
@@ -258,6 +439,15 @@ class MessageWidget(QtWidgets.QFrame):
             html_content = self._format_text(content)
 
         self.content_label.setText(html_content)
+
+        # 如果是 thinking 角色，设置摘要（取前100个字符）
+        if self.role == "thinking" and content:
+            # 移除换行符，截取前100个字符作为摘要
+            summary = content.replace("\n", " ").strip()
+            if len(summary) > 20:
+                summary = summary[:20] + "..."
+            if hasattr(self, 'summary_label'):
+                self.summary_label.setText("💭 %s" % summary)
 
         # 显示图片
         self._display_images()
@@ -310,7 +500,7 @@ class MessageWidget(QtWidgets.QFrame):
         toggle = QtWidgets.QLabel("▶ %s" % show_text)
         toggle.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         toggle.setStyleSheet(
-            "color: #999999; font-size: 12px; background: transparent;"
+            f"color: #999999; font-size: 12px; background: transparent; font-family: '{GLOBAL_FONT}';"
         )
         container_layout.addWidget(toggle)
 
@@ -322,7 +512,7 @@ class MessageWidget(QtWidgets.QFrame):
         )
         detail.setCursor(QtGui.QCursor(QtCore.Qt.IBeamCursor))
         detail.setStyleSheet(
-            "color: #888888; font-size: 12px; background: transparent; padding: 4px 8px; border: 1px solid #444444; border-radius: 4px;"
+            f"color: #888888; font-size: 12px; background: transparent; padding: 4px 8px; border: 1px solid #444444; border-radius: 4px; font-family: '{GLOBAL_FONT}';"
         )
         detail.hide()
         container_layout.addWidget(detail)
@@ -372,8 +562,11 @@ class MessageWidget(QtWidgets.QFrame):
 
     def append_content(self, text):
         """追加内容"""
-        self.set_content(self.raw_content + text)
-
+        # 如果当前是折叠状态，追加内容后需要更新摘要
+        if self.role == "thinking" and self.is_collapsed:
+            self.set_content(self.raw_content + text)
+        else:
+            self.set_content(self.raw_content + text)
 
 class ChatWidget(QtWidgets.QWidget):
     """聊天标签页"""
@@ -447,6 +640,7 @@ class ChatWidget(QtWidgets.QWidget):
                 background: #888888;
             }
         """)
+        # scroll.setMaximumHeight(100) 
 
         # 消息容器 - 使用透明背景
         self.messages_container = QtWidgets.QWidget()
@@ -486,60 +680,58 @@ class ChatWidget(QtWidgets.QWidget):
         self.image_preview_container.hide()
         input_layout.addWidget(self.image_preview_container)
 
-        # 输入框和图片导入按钮的水平布局
-        input_row_layout = QtWidgets.QHBoxLayout()
-
-        # 输入框
+               # 第一行：输入框
         self.input_text = QtWidgets.QTextEdit()
         self.input_text.setPlaceholderText(i18n._("input_placeholder"))
         self.input_text.setMaximumHeight(80)
-        self.input_text.setStyleSheet("""
-            QTextEdit {
+        self.input_text.setStyleSheet(f"""
+            QTextEdit {{
                 background-color: transparent;
                 color: #FFFFFF;
                 border: none;
                 font-size: 14px;
                 line-height: 1.5;
-            }
-            QTextEdit::placeholder {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QTextEdit::placeholder {{
                 color: #888888;
-            }
+            }}
         """)
-        input_row_layout.addWidget(self.input_text)
+        input_layout.addWidget(self.input_text)
+
+        # 第二行：图片导入按钮 + 发送按钮（并排靠右）
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.addStretch()  # 弹性空间，把按钮推到右边
 
         # 图片导入按钮
         self.image_btn = QtWidgets.QPushButton()
         self.image_btn.setFixedSize(40, 40)
-        self.image_btn.setStyleSheet("""
-            QPushButton {
+        self.image_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #4A4A4A;
                 border: 1px solid #555555;
                 border-radius: 8px;
                 padding: 5px;
                 color: #5DADE2;
                 font-size: 20px;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #555555;
                 border-color: #5DADE2;
                 color: #76C5F0;
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: #3A3A3A;
-            }
+            }}
         """)
-        self.image_btn.setText("🖼️")
+        self.image_btn.setText("📁")
         self.image_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.image_btn.clicked.connect(self.import_image)
         self.image_btn.setToolTip(i18n._("import_image"))
-        input_row_layout.addWidget(self.image_btn)
+        btn_layout.addWidget(self.image_btn)
 
-        input_layout.addLayout(input_row_layout)
-
-        # 发送按钮（右下角）
-        btn_layout = QtWidgets.QHBoxLayout()
-        btn_layout.addStretch()
-
+        # 发送按钮
         self.send_btn = StyledButton(i18n._("send_button"), accent=True)
         self.send_btn.setFixedSize(100, 40)
         self.send_btn.clicked.connect(self.on_send_clicked)
@@ -656,18 +848,19 @@ class ChatWidget(QtWidgets.QWidget):
 
             delete_btn = QtWidgets.QPushButton("×")
             delete_btn.setFixedSize(20, 20)
-            delete_btn.setStyleSheet("""
-                QPushButton {
+            delete_btn.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #E74C3C;
                     color: white;
                     border: none;
                     border-radius: 10px;
                     font-size: 14px;
                     font-weight: bold;
-                }
-                QPushButton:hover {
+                    font-family: "{GLOBAL_FONT}";
+                }}
+                QPushButton:hover {{
                     background-color: #C0392B;
-                }
+                }}
             """)
             delete_btn.clicked.connect(lambda idx=i: self.remove_image(idx))
 
@@ -905,85 +1098,89 @@ class ConfigWidget(QtWidgets.QWidget):
         panel_layout.setSpacing(12)
 
         self.labels["list_label"] = QtWidgets.QLabel(i18n._("saved_configs"))
-        self.labels["list_label"].setStyleSheet("color: #CCCCCC; font-size: 14px;")
+        self.labels["list_label"].setStyleSheet(f"color: #CCCCCC; font-size: 14px; font-family: '{GLOBAL_FONT}';")
         panel_layout.addWidget(self.labels["list_label"])
 
         self.config_list = QtWidgets.QListWidget()
         self.config_list.setMaximumHeight(80)
-        self.config_list.setStyleSheet("""
-            QListWidget {
+        self.config_list.setStyleSheet(f"""
+            QListWidget {{
                 background-color: #4A4A4A;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
                 padding: 3px;
                 font-size: 13px;
-            }
-            QListWidget::item {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QListWidget::item {{
                 padding: 6px;
                 border-radius: 4px;
-            }
-            QListWidget::item:selected {
+            }}
+            QListWidget::item:selected {{
                 background-color: #5DADE2;
                 color: #2D2D2D;
-            }
-            QListWidget::item:hover {
+            }}
+            QListWidget::item:hover {{
                 background-color: #555555;
-            }
+            }}
         """)
         self.config_list.itemClicked.connect(self.on_config_selected)
         panel_layout.addWidget(self.config_list)
 
-        line_style = """
-            QLineEdit {
+        line_style = f"""
+            QLineEdit {{
                 background-color: #4A4A4A;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
-                padding: 8px 12px;
+                padding: 2px 2px;
                 font-size: 13px;
-            }
-            QLineEdit:focus {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QLineEdit:focus {{
                 border: 2px solid #5DADE2;
-            }
-            QLineEdit:disabled {
+            }}
+            QLineEdit:disabled {{
                 background-color: #3A3A3A;
                 color: #888888;
-            }
+            }}
         """
 
-        combo_style = """
-            QComboBox {
+        combo_style = f"""
+            QComboBox {{
                 background-color: #4A4A4A;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
                 padding: 8px 12px;
                 font-size: 13px;
-            }
-            QComboBox::drop-down {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QComboBox::drop-down {{
                 border: none;
                 width: 25px;
-            }
-            QComboBox::down-arrow {
+            }}
+            QComboBox::down-arrow {{
                 image: none;
                 border-left: 4px solid transparent;
                 border-right: 4px solid transparent;
                 border-top: 6px solid #CCCCCC;
                 margin-right: 8px;
-            }
-            QComboBox QAbstractItemView {
+            }}
+            QComboBox QAbstractItemView {{
                 background-color: #4A4A4A;
                 color: #FFFFFF;
                 selection-background-color: #5DADE2;
                 selection-color: #2D2D2D;
                 border: 1px solid #555555;
                 border-radius: 4px;
-            }
-            QComboBox:disabled {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QComboBox:disabled {{
                 background-color: #3A3A3A;
                 color: #888888;
-            }
+            }}
         """
 
         form_layout = QtWidgets.QGridLayout()
@@ -992,7 +1189,7 @@ class ConfigWidget(QtWidgets.QWidget):
 
         row = 0
         self.labels["name_label"] = QtWidgets.QLabel(i18n._("name"))
-        self.labels["name_label"].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.labels["name_label"].setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
         self.name_edit = QtWidgets.QLineEdit()
         self.name_edit.setPlaceholderText("e.g., My GPT-4")
         self.name_edit.setStyleSheet(line_style)
@@ -1001,7 +1198,7 @@ class ConfigWidget(QtWidgets.QWidget):
 
         row += 1
         self.labels["provider_label"] = QtWidgets.QLabel(i18n._("provider"))
-        self.labels["provider_label"].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.labels["provider_label"].setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
         self.provider_combo = QtWidgets.QComboBox()
         self.provider_combo.setStyleSheet(combo_style)
         for provider_id in config.get_provider_list():
@@ -1013,7 +1210,7 @@ class ConfigWidget(QtWidgets.QWidget):
 
         row += 1
         self.labels["model_label"] = QtWidgets.QLabel(i18n._("model"))
-        self.labels["model_label"].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.labels["model_label"].setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
         self.model_combo = QtWidgets.QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.setStyleSheet(combo_style)
@@ -1022,7 +1219,7 @@ class ConfigWidget(QtWidgets.QWidget):
 
         row += 1
         self.labels["url_label"] = QtWidgets.QLabel(i18n._("api_url"))
-        self.labels["url_label"].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.labels["url_label"].setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
         self.url_edit = QtWidgets.QLineEdit()
         self.url_edit.setPlaceholderText(i18n._("api_url_placeholder"))
         self.url_edit.setStyleSheet(line_style)
@@ -1031,7 +1228,7 @@ class ConfigWidget(QtWidgets.QWidget):
 
         row += 1
         self.labels["key_label"] = QtWidgets.QLabel(i18n._("api_key"))
-        self.labels["key_label"].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        self.labels["key_label"].setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
         self.key_edit = QtWidgets.QLineEdit()
         self.key_edit.setPlaceholderText(i18n._("api_key_placeholder"))
         self.key_edit.setEchoMode(QtWidgets.QLineEdit.Password)
@@ -1041,7 +1238,7 @@ class ConfigWidget(QtWidgets.QWidget):
 
         row += 1
         self.labels["version_label"] = QtWidgets.QLabel(i18n._("api_version"))
-        self.labels["version_label"].setStyleSheet("color: #CCCCCC; font-size: 13px;")
+        # self.labels["version_label"].setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
         self.version_edit = QtWidgets.QLineEdit()
         self.version_edit.setPlaceholderText(i18n._("api_version_placeholder"))
         self.version_edit.setStyleSheet(line_style)
@@ -1050,22 +1247,23 @@ class ConfigWidget(QtWidgets.QWidget):
 
         panel_layout.addLayout(form_layout)
 
-        checkbox_style = """
-            QCheckBox {
+        checkbox_style = f"""
+            QCheckBox {{
                 color: #CCCCCC;
                 font-size: 12px;
                 spacing: 6px;
-            }
-            QCheckBox::indicator {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QCheckBox::indicator {{
                 width: 16px;
                 height: 16px;
                 border-radius: 3px;
                 border: none;
                 background-color: #4A4A4A;
-            }
-            QCheckBox::indicator:checked {
+            }}
+            QCheckBox::indicator:checked {{
                 background-color: #5DADE2;
-            }
+            }}
         """
 
         self.reasoning_checkbox = QtWidgets.QCheckBox(i18n._("reasoning_model"))
@@ -1085,18 +1283,19 @@ class ConfigWidget(QtWidgets.QWidget):
         panel_layout.addLayout(form_layout)
 
         self.advanced_toggle = QtWidgets.QPushButton(i18n._("show_advanced"))
-        self.advanced_toggle.setStyleSheet("""
-            QPushButton {
+        self.advanced_toggle.setStyleSheet(f"""
+            QPushButton {{
                 background: transparent;
                 color: #5DADE2;
                 border: none;
                 font-size: 12px;
                 text-align: left;
                 padding: 3px 0;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 color: #7EC8E3;
-            }
+            }}
         """)
         self.advanced_toggle.clicked.connect(self.toggle_advanced)
         panel_layout.addWidget(self.advanced_toggle)
@@ -1107,29 +1306,30 @@ class ConfigWidget(QtWidgets.QWidget):
         advanced_layout.setSpacing(8)
         advanced_layout.setColumnStretch(1, 1)
 
-        spin_style = """
-            QSpinBox, QDoubleSpinBox {
+        spin_style = f"""
+            QSpinBox, QDoubleSpinBox {{
                 background-color: #4A4A4A;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 6px;
                 padding: 6px 10px;
                 font-size: 12px;
-            }
+                font-family: "{GLOBAL_FONT}";
+            }}
         """
 
         self.labels["temp_label"] = QtWidgets.QLabel(i18n._("temperature"))
-        self.labels["temp_label"].setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.labels["temp_label"].setStyleSheet(f"color: #AAAAAA; font-size: 12px; font-family: '{GLOBAL_FONT}';")
         self.temp_spin = QtWidgets.QDoubleSpinBox()
         self.temp_spin.setRange(0.0, 2.0)
         self.temp_spin.setSingleStep(0.1)
-        self.temp_spin.setValue(0.7)
+        self.temp_spin.setValue(1)
         self.temp_spin.setStyleSheet(spin_style)
         advanced_layout.addWidget(self.labels["temp_label"], 0, 0)
         advanced_layout.addWidget(self.temp_spin, 0, 1)
 
         self.labels["tokens_label"] = QtWidgets.QLabel(i18n._("max_tokens"))
-        self.labels["tokens_label"].setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.labels["tokens_label"].setStyleSheet(f"color: #AAAAAA; font-size: 12px; font-family: '{GLOBAL_FONT}';")
         self.max_tokens_spin = QtWidgets.QSpinBox()
         self.max_tokens_spin.setRange(100, 8192)
         self.max_tokens_spin.setSingleStep(100)
@@ -1139,7 +1339,7 @@ class ConfigWidget(QtWidgets.QWidget):
         advanced_layout.addWidget(self.max_tokens_spin, 1, 1)
 
         self.labels["timeout_label"] = QtWidgets.QLabel(i18n._("timeout"))
-        self.labels["timeout_label"].setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        self.labels["timeout_label"].setStyleSheet(f"color: #AAAAAA; font-size: 12px; font-family: '{GLOBAL_FONT}';")
         self.timeout_spin = QtWidgets.QSpinBox()
         self.timeout_spin.setRange(10, 600)
         self.timeout_spin.setSingleStep(10)
@@ -1193,14 +1393,59 @@ class ConfigWidget(QtWidgets.QWidget):
 
         self.on_provider_changed(0)
 
+    # def toggle_advanced(self):
+    #     """切换高级设置显示"""
+    #     if self.advanced_frame.isVisible():
+    #         self.advanced_frame.hide()
+    #         self.advanced_toggle.setText(i18n._("show_advanced"))
+    #     else:
+    #         self.advanced_frame.show()
+
+    #         self.advanced_toggle.setText(i18n._("hide_advanced"))
     def toggle_advanced(self):
-        """切换高级设置显示"""
+        """切换高级设置显示，同时隐藏/显示基础设置"""
         if self.advanced_frame.isVisible():
+            # 当前显示高级 → 隐藏高级，显示基础
             self.advanced_frame.hide()
             self.advanced_toggle.setText(i18n._("show_advanced"))
+            # 显示基础设置
+            self._show_basic_settings(True)
         else:
+            # 当前显示基础 → 隐藏基础，显示高级
             self.advanced_frame.show()
             self.advanced_toggle.setText(i18n._("hide_advanced"))
+            # 隐藏基础设置
+            self._show_basic_settings(False)
+
+    def _show_basic_settings(self, visible):
+        """控制基础设置区域的显隐"""
+        # 配置列表区域
+        # self.config_list.setVisible(visible)
+        # self.labels["list_label"].setVisible(visible)
+        
+        # # 表单区域
+        # self.name_edit.setVisible(visible)
+        # self.labels["name_label"].setVisible(visible)
+        
+        # self.provider_combo.setVisible(visible)
+        # self.labels["provider_label"].setVisible(visible)
+        
+        self.model_combo.setVisible(visible)
+        self.labels["model_label"].setVisible(visible)
+        
+        self.url_edit.setVisible(visible)
+        self.labels["url_label"].setVisible(visible)
+        
+        self.key_edit.setVisible(visible)
+        self.labels["key_label"].setVisible(visible)
+        
+        # self.version_edit.setVisible(visible)
+        # self.labels["version_label"].setVisible(visible)
+        
+        # 复选框
+        self.reasoning_checkbox.setVisible(visible)
+        self.vision_checkbox.setVisible(visible)
+        self.current_checkbox.setVisible(visible)
 
     def on_provider_changed(self, index):
         """提供商改变时更新模型列表和表单"""
@@ -1279,7 +1524,7 @@ class ConfigWidget(QtWidgets.QWidget):
         self.version_edit.setText(cfg.get("api_version", ""))
         self.reasoning_checkbox.setChecked(cfg.get("is_reasoning_model", False))
         self.vision_checkbox.setChecked(cfg.get("is_vision_model", False))
-        self.temp_spin.setValue(cfg.get("temperature", 0.7))
+        self.temp_spin.setValue(cfg.get("temperature", 1))
         self.max_tokens_spin.setValue(cfg.get("max_tokens", 8000))
         self.timeout_spin.setValue(cfg.get("timeout", 60))
 
@@ -1299,7 +1544,7 @@ class ConfigWidget(QtWidgets.QWidget):
         self.reasoning_checkbox.setChecked(False)
         self.vision_checkbox.setChecked(False)
         self.current_checkbox.setChecked(False)
-        self.temp_spin.setValue(0.7)
+        self.temp_spin.setValue(0.6)
         self.max_tokens_spin.setValue(8000)
         self.timeout_spin.setValue(60)
 
@@ -1428,23 +1673,234 @@ class ConfigWidget(QtWidgets.QWidget):
         QtWidgets.QMessageBox.critical(self, "Error", msg)
 
 
+# class LogWidget(QtWidgets.QWidget):
+#     """日志标签页"""
+
+#     def __init__(self, parent=None):
+#         super().__init__(parent)
+#         self.setup_ui()
+#         self.load_logs()
+#         logger.logger.add_observer(self.on_log_entry)
+
+#     def update_language(self):
+#         """更新界面语言"""
+#         if hasattr(self, "category_label"):
+#             self.category_label.setText(i18n._("log_category"))
+#         if hasattr(self, "auto_scroll"):
+#             self.auto_scroll.setText(i18n._("auto_scroll"))
+#         if hasattr(self, "clear_btn"):
+#             self.clear_btn.setText(i18n._("clear_log"))
+
+#     def setup_ui(self):
+#         layout = QtWidgets.QVBoxLayout(self)
+#         layout.setSpacing(10)
+#         layout.setContentsMargins(15, 15, 15, 15)
+
+#         # 控制栏
+#         control_panel = QtWidgets.QFrame()
+#         control_panel.setStyleSheet("""
+#             QFrame {
+#                 background-color: #404040;
+#                 border-radius: 12px;
+#                 border: none;
+#             }
+#         """)
+#         control_layout = QtWidgets.QHBoxLayout(control_panel)
+#         control_layout.setContentsMargins(15, 10, 15, 10)
+
+#         # 日志类别过滤
+#         category_label = QtWidgets.QLabel(i18n._("log_category"))
+#         category_label.setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
+#         control_layout.addWidget(category_label)
+
+#         self.category_combo = QtWidgets.QComboBox()
+#         self.category_combo.addItem("All", None)
+#         self.category_combo.addItem("[USER_INPUT]", logger.USER_INPUT)
+#         self.category_combo.addItem("[AI_REQUEST]", logger.AI_REQUEST)
+#         self.category_combo.addItem("[AI_RESPONSE]", logger.AI_RESPONSE)
+#         self.category_combo.addItem("[TOOL_CALL]", logger.TOOL_CALL)
+#         self.category_combo.addItem("[ERRORS]", logger.ERRORS)
+#         self.category_combo.setStyleSheet(f"""
+#             QComboBox {{
+#                 background-color: #4A4A4A;
+#                 color: #FFFFFF;
+#                 border: none;
+#                 border-radius: 8px;
+#                 padding: 6px 12px;
+#                 min-width: 120px;
+#                 font-family: "{GLOBAL_FONT}";
+#             }}
+#             QComboBox QAbstractItemView {{
+#                 background-color: #404040;
+#                 color: #FFFFFF;
+#                 selection-background-color: #5DADE2;
+#                 border: none;
+#                 font-family: "{GLOBAL_FONT}";
+#             }}
+#         """)
+#         self.category_combo.currentIndexChanged.connect(self.on_filter_changed)
+#         control_layout.addWidget(self.category_combo)
+
+#         control_layout.addStretch()
+
+#         # 自动滚动
+#         self.auto_scroll = QtWidgets.QCheckBox(i18n._("auto_scroll"))
+#         self.auto_scroll.setChecked(True)
+#         self.auto_scroll.setStyleSheet(f"""
+#             QCheckBox {{
+#                 color: #CCCCCC;
+#                 font-size: 13px;
+#                 spacing: 8px;
+#                 font-family: "{GLOBAL_FONT}";
+#             }}
+#             QCheckBox::indicator {{
+#                 width: 18px;
+#                 height: 18px;
+#                 border-radius: 4px;
+#                 border: none;
+#                 background-color: #4A4A4A;
+#             }}
+#             QCheckBox::indicator:checked {{
+#                 background-color: #5DADE2;
+#             }}
+#         """)
+#         control_layout.addWidget(self.auto_scroll)
+
+#         # 清空按钮
+#         self.clear_btn = StyledButton(i18n._("clear_log"))
+#         self.clear_btn.setFixedSize(85, 30)
+#         self.clear_btn.clicked.connect(self.on_clear)
+#         control_layout.addWidget(self.clear_btn)
+
+#         layout.addWidget(control_panel)
+
+#         # 日志显示区域
+#         log_panel = QtWidgets.QFrame()
+#         log_panel.setStyleSheet("""
+#             QFrame {
+#                 background-color: #404040;
+#                 border-radius: 15px;
+#                 border: none;
+#             }
+#         """)
+#         log_layout = QtWidgets.QVBoxLayout(log_panel)
+#         log_layout.setContentsMargins(10, 10, 10, 10)
+
+#         self.log_text = QtWidgets.QTextEdit()
+#         self.log_text.setReadOnly(True)
+#         self.log_text.setStyleSheet(f"""
+#             QTextEdit {{
+#                 background-color: #1E1E1E;
+#                 color: #FFFFFF;
+#                 border: none;
+#                 border-radius: 10px;
+#                 font-family: "{GLOBAL_FONT}", 'Consolas', 'Monaco', monospace;
+#                 font-size: 12px;
+#                 padding: 12px;
+#             }}
+#         """)
+#         log_layout.addWidget(self.log_text)
+
+#         layout.addWidget(log_panel, stretch=1)
+
+#     def load_logs(self):
+#         self.log_text.clear()
+#         category = self.category_combo.currentData()
+#         logs = logger.logger.get_logs(category=category, limit=500)
+
+#         for entry in logs:
+#             self.append_log_entry(entry)
+
+#     def append_log_entry(self, entry):
+#         timestamp = entry.get("timestamp", "")[:19]
+#         category = entry.get("category", "UNKNOWN")
+#         message = entry.get("message", "")
+#         data = entry.get("data")
+
+#         # 根据类别设置颜色
+#         colors = {
+#             "USER_INPUT": "#58D68D",  # 绿色
+#             "AI_REQUEST": "#5DADE2",  # 蓝色
+#             "AI_RESPONSE": "#AF7AC5",  # 紫色
+#             "TOOL_CALL": "#F5B041",  # 黄色
+#             "ERRORS": "#F07178",  # 红色
+#         }
+#         color = colors.get(category, "#FFFFFF")
+
+#         # 构建日志行
+#         log_line = '<span style="color: #888888">[%s]</span> ' % timestamp
+#         log_line += '<span style="color: %s">[%s]</span> ' % (color, category)
+#         log_line += "%s" % message.replace("<", "&lt;").replace(">", "&gt;")
+
+#         # 如果有数据，格式化显示
+#         if data:
+#             try:
+#                 if isinstance(data, dict):
+#                     data_str = json.dumps(data, ensure_ascii=False, indent=2)
+#                 else:
+#                     data_str = str(data)
+#                 data_str = data_str.replace("<", "&lt;").replace(">", "&gt;")
+#                 log_line += (
+#                     '<br><span style="color: #888888; margin-left: 20px; font-size: 11px;">%s</span>'
+#                     % data_str.replace("\n", "<br>")
+#                 )
+#             except:
+#                 pass
+
+#         log_line += "<br>"
+
+#         self.log_text.insertHtml(log_line)
+
+#         if self.auto_scroll.isChecked():
+#             scrollbar = self.log_text.verticalScrollBar()
+#             scrollbar.setValue(scrollbar.maximum())
+
+#     def on_log_entry(self, entry):
+#         QtCore.QTimer.singleShot(0, lambda: self.handle_new_entry(entry))
+
+#     def handle_new_entry(self, entry):
+#         category_filter = self.category_combo.currentData()
+#         if category_filter and entry.get("category") != category_filter:
+#             return
+#         self.append_log_entry(entry)
+
+#     def on_filter_changed(self):
+#         self.load_logs()
+
+#     def on_clear(self):
+#         logger.logger.clear()
+#         self.log_text.clear()
+
+#     def __del__(self):
+#         try:
+#             logger.logger.remove_observer(self.on_log_entry)
+#         except:
+#             pass
+import os
+import json
+
 class LogWidget(QtWidgets.QWidget):
-    """日志标签页"""
+    """自定义提示词编辑器（读写插件目录下的 custom_prompt.txt）"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
-        self.load_logs()
-        logger.logger.add_observer(self.on_log_entry)
+        self.load_prompt_file()
 
     def update_language(self):
         """更新界面语言"""
         if hasattr(self, "category_label"):
-            self.category_label.setText(i18n._("log_category"))
+            self.category_label.setText(i18n._("custom_prompt"))
         if hasattr(self, "auto_scroll"):
-            self.auto_scroll.setText(i18n._("auto_scroll"))
+            self.auto_scroll.setText(i18n._("auto_save"))
         if hasattr(self, "clear_btn"):
-            self.clear_btn.setText(i18n._("clear_log"))
+            self.clear_btn.setText(i18n._("save_prompt"))
+
+    def get_prompt_file_path(self):
+        """获取提示词文件路径（插件目录下的 custom_prompt.txt）"""
+        # 获取当前文件所在目录
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(plugin_dir, "custom_prompt.txt")
 
     def setup_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -1463,172 +1919,119 @@ class LogWidget(QtWidgets.QWidget):
         control_layout = QtWidgets.QHBoxLayout(control_panel)
         control_layout.setContentsMargins(15, 10, 15, 10)
 
-        # 日志类别过滤
-        category_label = QtWidgets.QLabel(i18n._("log_category"))
-        category_label.setStyleSheet("color: #CCCCCC; font-size: 13px;")
-        control_layout.addWidget(category_label)
-
-        self.category_combo = QtWidgets.QComboBox()
-        self.category_combo.addItem("All", None)
-        self.category_combo.addItem("[USER_INPUT]", logger.USER_INPUT)
-        self.category_combo.addItem("[AI_REQUEST]", logger.AI_REQUEST)
-        self.category_combo.addItem("[AI_RESPONSE]", logger.AI_RESPONSE)
-        self.category_combo.addItem("[TOOL_CALL]", logger.TOOL_CALL)
-        self.category_combo.addItem("[ERRORS]", logger.ERRORS)
-        self.category_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #4A4A4A;
-                color: #FFFFFF;
-                border: none;
-                border-radius: 8px;
-                padding: 6px 12px;
-                min-width: 120px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #404040;
-                color: #FFFFFF;
-                selection-background-color: #5DADE2;
-                border: none;
-            }
-        """)
-        self.category_combo.currentIndexChanged.connect(self.on_filter_changed)
-        control_layout.addWidget(self.category_combo)
+        # 标签
+        self.category_label = QtWidgets.QLabel(i18n._("tab_prompt"))
+        self.category_label.setStyleSheet(f"color: #CCCCCC; font-size: 13px; font-family: '{GLOBAL_FONT}';")
+        control_layout.addWidget(self.category_label)
 
         control_layout.addStretch()
 
-        # 自动滚动
-        self.auto_scroll = QtWidgets.QCheckBox(i18n._("auto_scroll"))
+        # 自动保存复选框
+        self.auto_scroll = QtWidgets.QCheckBox(i18n._("auto_save"))
         self.auto_scroll.setChecked(True)
-        self.auto_scroll.setStyleSheet("""
-            QCheckBox {
+        self.auto_scroll.setStyleSheet(f"""
+            QCheckBox {{
                 color: #CCCCCC;
                 font-size: 13px;
                 spacing: 8px;
-            }
-            QCheckBox::indicator {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QCheckBox::indicator {{
                 width: 18px;
                 height: 18px;
                 border-radius: 4px;
                 border: none;
                 background-color: #4A4A4A;
-            }
-            QCheckBox::indicator:checked {
+            }}
+            QCheckBox::indicator:checked {{
                 background-color: #5DADE2;
-            }
+            }}
         """)
         control_layout.addWidget(self.auto_scroll)
 
-        # 清空按钮
-        self.clear_btn = StyledButton(i18n._("clear_log"))
+        # 保存按钮
+        self.clear_btn = StyledButton(i18n._("save_prompt"))
         self.clear_btn.setFixedSize(85, 30)
-        self.clear_btn.clicked.connect(self.on_clear)
+        self.clear_btn.clicked.connect(self.on_save)
         control_layout.addWidget(self.clear_btn)
 
         layout.addWidget(control_panel)
 
-        # 日志显示区域
-        log_panel = QtWidgets.QFrame()
-        log_panel.setStyleSheet("""
+        # 编辑区域
+        edit_panel = QtWidgets.QFrame()
+        edit_panel.setStyleSheet("""
             QFrame {
                 background-color: #404040;
                 border-radius: 15px;
                 border: none;
             }
         """)
-        log_layout = QtWidgets.QVBoxLayout(log_panel)
-        log_layout.setContentsMargins(10, 10, 10, 10)
+        edit_layout = QtWidgets.QVBoxLayout(edit_panel)
+        edit_layout.setContentsMargins(10, 10, 10, 10)
 
         self.log_text = QtWidgets.QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet("""
-            QTextEdit {
+        self.log_text.setPlaceholderText(i18n._("prompt_placeholder"))
+        self.log_text.setStyleSheet(f"""
+            QTextEdit {{
                 background-color: #1E1E1E;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 10px;
-                font-family: 'Consolas', 'Monaco', monospace;
+                font-family: "{GLOBAL_FONT}", 'Consolas', 'Monaco', monospace;
                 font-size: 12px;
                 padding: 12px;
-            }
+            }}
         """)
-        log_layout.addWidget(self.log_text)
+        edit_layout.addWidget(self.log_text)
 
-        layout.addWidget(log_panel, stretch=1)
+        layout.addWidget(edit_panel, stretch=1)
 
-    def load_logs(self):
-        self.log_text.clear()
-        category = self.category_combo.currentData()
-        logs = logger.logger.get_logs(category=category, limit=500)
-
-        for entry in logs:
-            self.append_log_entry(entry)
-
-    def append_log_entry(self, entry):
-        timestamp = entry.get("timestamp", "")[:19]
-        category = entry.get("category", "UNKNOWN")
-        message = entry.get("message", "")
-        data = entry.get("data")
-
-        # 根据类别设置颜色
-        colors = {
-            "USER_INPUT": "#58D68D",  # 绿色
-            "AI_REQUEST": "#5DADE2",  # 蓝色
-            "AI_RESPONSE": "#AF7AC5",  # 紫色
-            "TOOL_CALL": "#F5B041",  # 黄色
-            "ERRORS": "#F07178",  # 红色
-        }
-        color = colors.get(category, "#FFFFFF")
-
-        # 构建日志行
-        log_line = '<span style="color: #888888">[%s]</span> ' % timestamp
-        log_line += '<span style="color: %s">[%s]</span> ' % (color, category)
-        log_line += "%s" % message.replace("<", "&lt;").replace(">", "&gt;")
-
-        # 如果有数据，格式化显示
-        if data:
+    def load_prompt_file(self):
+        """加载提示词文件内容"""
+        file_path = self.get_prompt_file_path()
+        
+        if os.path.exists(file_path):
             try:
-                if isinstance(data, dict):
-                    data_str = json.dumps(data, ensure_ascii=False, indent=2)
-                else:
-                    data_str = str(data)
-                data_str = data_str.replace("<", "&lt;").replace(">", "&gt;")
-                log_line += (
-                    '<br><span style="color: #888888; margin-left: 20px; font-size: 11px;">%s</span>'
-                    % data_str.replace("\n", "<br>")
-                )
-            except:
-                pass
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    self.log_text.setText(content)
+            except Exception as e:
+                self.log_text.setText(f"# 读取文件失败: {e}\n")
+        else:
+            # 文件不存在，创建默认内容
+            default_content = i18n._("prompt_placeholder")
+            self.log_text.setText(default_content)
+            self.on_save()  # 自动保存默认文件
 
-        log_line += "<br>"
+    def on_save(self):
+        """保存提示词文件"""
+        file_path = self.get_prompt_file_path()
+        content = self.log_text.toPlainText()
+        
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            
+            # 可选：显示保存成功提示
+            self.clear_btn.setText(i18n._("saved_prompt"))
+            QtCore.QTimer.singleShot(1500, lambda: self.clear_btn.setText(i18n._("save_prompt")))
+            
+        except Exception as e:
+            self.clear_btn.setText("保存失败")
+            QtCore.QTimer.singleShot(1500, lambda: self.clear_btn.setText("保存"))
+            print(f"保存文件失败: {e}")
 
-        self.log_text.insertHtml(log_line)
-
-        if self.auto_scroll.isChecked():
-            scrollbar = self.log_text.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-
-    def on_log_entry(self, entry):
-        QtCore.QTimer.singleShot(0, lambda: self.handle_new_entry(entry))
-
-    def handle_new_entry(self, entry):
-        category_filter = self.category_combo.currentData()
-        if category_filter and entry.get("category") != category_filter:
-            return
-        self.append_log_entry(entry)
-
-    def on_filter_changed(self):
-        self.load_logs()
-
-    def on_clear(self):
-        logger.logger.clear()
-        self.log_text.clear()
+    def get_content(self):
+        """获取当前编辑框内容（供外部调用）"""
+        return self.log_text.toPlainText()
 
     def __del__(self):
+        """析构时自动保存"""
         try:
-            logger.logger.remove_observer(self.on_log_entry)
+            if hasattr(self, "auto_scroll") and self.auto_scroll.isChecked():
+                self.on_save()
         except:
             pass
-
 
 class AboutDialog(QtWidgets.QDialog):
     """关于对话框"""
@@ -1641,25 +2044,28 @@ class AboutDialog(QtWidgets.QDialog):
 
     def setup_ui(self):
         # 深色主题样式
-        self.setStyleSheet("""
-            QDialog {
+        self.setStyleSheet(f"""
+            QDialog {{
                 background-color: #2D2D2D;
-            }
-            QLabel {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QLabel {{
                 color: #CCCCCC;
                 background-color: transparent;
-            }
-            QPushButton {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton {{
                 background-color: #5DADE2;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
                 padding: 10px 24px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #76C5F0;
-            }
+            }}
         """)
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -1669,7 +2075,7 @@ class AboutDialog(QtWidgets.QDialog):
 
         # 标题
         title_label = QtWidgets.QLabel("🤖 PyMOL AI Assistant")
-        title_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #5DADE2;")
+        title_label.setStyleSheet(f"font-size: 24px; font-weight: bold; color: #5DADE2; font-family: '{GLOBAL_FONT}';")
         title_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(title_label)
 
@@ -1677,7 +2083,7 @@ class AboutDialog(QtWidgets.QDialog):
         version_label = QtWidgets.QLabel(
             "%s %s" % (i18n._("about_version"), __version__)
         )
-        version_label.setStyleSheet("font-size: 14px; color: #888888;")
+        version_label.setStyleSheet(f"font-size: 14px; color: #888888; font-family: '{GLOBAL_FONT}';")
         version_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(version_label)
 
@@ -1685,7 +2091,7 @@ class AboutDialog(QtWidgets.QDialog):
 
         # 插件介绍
         intro_text = QtWidgets.QLabel(i18n._("about_intro"))
-        intro_text.setStyleSheet("font-size: 12px; color: #CCCCCC; line-height: 1.6;")
+        intro_text.setStyleSheet(f"font-size: 12px; color: #CCCCCC; line-height: 1.6; font-family: '{GLOBAL_FONT}';")
         intro_text.setAlignment(QtCore.Qt.AlignLeft)
         intro_text.setWordWrap(True)
         layout.addWidget(intro_text)
@@ -1699,11 +2105,11 @@ class AboutDialog(QtWidgets.QDialog):
         info_layout.setLabelAlignment(QtCore.Qt.AlignRight)
 
         author_label = QtWidgets.QLabel("Mo Qiqin")
-        author_label.setStyleSheet("color: #CCCCCC;")
+        author_label.setStyleSheet(f"color: #CCCCCC; font-family: '{GLOBAL_FONT}';")
         info_layout.addRow(i18n._("about_author") + ":", author_label)
 
         email_label = QtWidgets.QLabel("moqiqin@live.com")
-        email_label.setStyleSheet("color: #5DADE2;")
+        email_label.setStyleSheet(f"color: #5DADE2; font-family: '{GLOBAL_FONT}';")
         info_layout.addRow(i18n._("about_email") + ":", email_label)
 
         # GitHub 链接
@@ -1720,8 +2126,8 @@ class AboutDialog(QtWidgets.QDialog):
 
         # 捐赠按钮
         donate_btn = QtWidgets.QPushButton(i18n._("about_donate"))
-        donate_btn.setStyleSheet("""
-            QPushButton {
+        donate_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #D4A574;
                 color: #2D2D2D;
                 border: none;
@@ -1729,10 +2135,11 @@ class AboutDialog(QtWidgets.QDialog):
                 padding: 12px 30px;
                 font-size: 14px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #E4B584;
-            }
+            }}
         """)
         donate_btn.clicked.connect(self.show_donate)
         layout.addWidget(donate_btn, alignment=QtCore.Qt.AlignCenter)
@@ -1749,24 +2156,27 @@ class AboutDialog(QtWidgets.QDialog):
         donate_dialog = QtWidgets.QDialog(self)
         donate_dialog.setWindowTitle(i18n._("donate_title"))
         donate_dialog.setFixedSize(350, 400)
-        donate_dialog.setStyleSheet("""
-            QDialog {
+        donate_dialog.setStyleSheet(f"""
+            QDialog {{
                 background-color: #2D2D2D;
-            }
-            QLabel {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QLabel {{
                 color: #CCCCCC;
                 background-color: transparent;
-            }
-            QPushButton {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton {{
                 background-color: #404040;
                 color: #FFFFFF;
                 border: 1px solid #555555;
                 border-radius: 6px;
                 padding: 8px 20px;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #505050;
-            }
+            }}
         """)
 
         layout = QtWidgets.QVBoxLayout(donate_dialog)
@@ -1775,7 +2185,7 @@ class AboutDialog(QtWidgets.QDialog):
         # 提示文字
         hint_label = QtWidgets.QLabel(i18n._("donate_hint"))
         hint_label.setWordWrap(True)
-        hint_label.setStyleSheet("color: #CCCCCC; font-size: 12px;")
+        hint_label.setStyleSheet(f"color: #CCCCCC; font-size: 12px; font-family: '{GLOBAL_FONT}';")
         hint_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(hint_label)
 
@@ -1793,7 +2203,7 @@ class AboutDialog(QtWidgets.QDialog):
             qr_label.setPixmap(scaled_pixmap)
         else:
             qr_label.setText(i18n._("donate_qr_missing"))
-            qr_label.setStyleSheet("color: #E74C3C; font-size: 12px;")
+            qr_label.setStyleSheet(f"color: #E74C3C; font-size: 12px; font-family: '{GLOBAL_FONT}';")
         qr_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(qr_label)
 
@@ -1824,31 +2234,33 @@ class AIAssistantDialog(QtWidgets.QDialog):
         )
 
         # 设置深色背景和全局样式
-        self.setStyleSheet("""
-            QDialog {
+        self.setStyleSheet(f"""
+            QDialog {{
                 background-color: #2D2D2D;
-            }
-            QMenu {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QMenu {{
                 background-color: #404040;
                 color: #FFFFFF;
                 border: 1px solid #555555;
                 border-radius: 4px;
                 padding: 4px;
-            }
-            QMenu::item {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QMenu::item {{
                 background-color: transparent;
                 padding: 6px 30px 6px 20px;
                 border-radius: 4px;
-            }
-            QMenu::item:selected {
+            }}
+            QMenu::item:selected {{
                 background-color: #5DADE2;
                 color: #FFFFFF;
-            }
-            QMenu::separator {
+            }}
+            QMenu::separator {{
                 height: 1px;
                 background-color: #555555;
                 margin: 4px 10px;
-            }
+            }}
         """)
 
         # 添加语言变更回调
@@ -1868,6 +2280,7 @@ class AIAssistantDialog(QtWidgets.QDialog):
 
         # 创建QTabWidget
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setMaximumHeight(600)
         self.tabs.setDocumentMode(False)
         # 设置标签位置在上方
         self.tabs.setTabPosition(QtWidgets.QTabWidget.North)
@@ -1875,18 +2288,19 @@ class AIAssistantDialog(QtWidgets.QDialog):
         tab_bar = self.tabs.tabBar()
         tab_bar.setExpanding(False)
         tab_bar.setElideMode(QtCore.Qt.ElideNone)
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
                 border: none;
                 background: transparent;
                 top: 0px;
-            }
-            QTabBar {
+            }}
+            QTabBar {{
                 qproperty-alignment: AlignCenter;
                 background: transparent;
                 border: none;
-            }
-            QTabBar::tab {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QTabBar::tab {{
                 background-color: #404040;
                 color: #AAAAAA;
                 border: none;
@@ -1897,15 +2311,16 @@ class AIAssistantDialog(QtWidgets.QDialog):
                 margin-bottom: 5px;
                 font-size: 13px;
                 min-width: 60px;
-            }
-            QTabBar::tab:selected {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QTabBar::tab:selected {{
                 background-color: #5DADE2;
                 color: #FFFFFF;
-            }
-            QTabBar::tab:hover:!selected {
+            }}
+            QTabBar::tab:hover:!selected {{
                 background-color: #4A4A4A;
                 color: #CCCCCC;
-            }
+            }}
         """)
 
         # 聊天标签页
@@ -1920,8 +2335,11 @@ class AIAssistantDialog(QtWidgets.QDialog):
         self.tabs.addTab(self.config_widget, i18n._("tab_config"))
 
         # 日志标签页
-        self.log_widget = LogWidget()
-        self.tabs.addTab(self.log_widget, i18n._("tab_log"))
+        # self.log_widget = LogWidget()
+        # self.tabs.addTab(self.log_widget, i18n._("tab_log"))
+        #Prompt标签页
+        self.prompt_widget = LogWidget()
+        self.tabs.addTab(self.prompt_widget, i18n._("tab_prompt"))
 
         layout.addWidget(self.tabs)
 
@@ -1930,12 +2348,26 @@ class AIAssistantDialog(QtWidgets.QDialog):
         # 创建水平布局放置菜单按钮
         menu_layout = QtWidgets.QHBoxLayout()
         menu_layout.setSpacing(10)
-
+        import ctypes
+        def toggle_language():
+            kernel32 = ctypes.windll.kernel32
+            # 获取系统语言ID (LCID)
+            lang_id = kernel32.GetUserDefaultUILanguage()
+            
+            # 简体中文的LCID是 0x0804 (十进制2052)
+            # 如果不是0x0804，就判定为使用英语
+            if lang_id != 0x0804:
+                new_lang="en"
+            else:
+                new_lang="zh"
+            i18n.set_language(new_lang)
+            config.config_manager.set_language(new_lang)
+        toggle_language()
         # 语言切换按钮 - 点击直接切换语言
-        self.lang_btn = StyledButton("🌐 " + self._get_target_language_text())
-        self.lang_btn.setFixedHeight(32)
-        self.lang_btn.clicked.connect(self.toggle_language)
-        menu_layout.addWidget(self.lang_btn)
+        # self.lang_btn = StyledButton("🌐 " + self._get_target_language_text())
+        # self.lang_btn.setFixedHeight(32)
+        # self.lang_btn.clicked.connect(self.toggle_language)
+        # menu_layout.addWidget(self.lang_btn)
 
         menu_layout.addStretch()
 
@@ -1952,10 +2384,10 @@ class AIAssistantDialog(QtWidgets.QDialog):
             menu_layout.addWidget(self.update_btn)
 
         # 关于按钮
-        self.about_btn = StyledButton("ℹ️ " + i18n._("menu_about"))
-        self.about_btn.setFixedHeight(32)
-        self.about_btn.clicked.connect(self.show_about_dialog)
-        menu_layout.addWidget(self.about_btn)
+        # self.about_btn = StyledButton("ℹ️ " + i18n._("menu_about"))
+        # self.about_btn.setFixedHeight(32)
+        # self.about_btn.clicked.connect(self.show_about_dialog)
+        # menu_layout.addWidget(self.about_btn)
 
         # 将菜单布局添加到主布局
         # 注意：这里我们暂时不添加，因为setup_ui中还没有获取到layout
@@ -1977,38 +2409,41 @@ class AIAssistantDialog(QtWidgets.QDialog):
         dialog.setFixedSize(500, 450)
 
         # 深色主题样式
-        dialog.setStyleSheet("""
-            QDialog {
+        dialog.setStyleSheet(f"""
+            QDialog {{
                 background-color: #2D2D2D;
-            }
-            QLabel {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QLabel {{
                 color: #CCCCCC;
                 background-color: transparent;
-            }
-            QPushButton {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton {{
                 background-color: #5DADE2;
                 color: #FFFFFF;
                 border: none;
                 border-radius: 8px;
                 padding: 10px 24px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #76C5F0;
-            }
-            QPushButton:disabled {
+            }}
+            QPushButton:disabled {{
                 background-color: #555555;
                 color: #888888;
-            }
-            QTextEdit {
+            }}
+            QTextEdit {{
                 background-color: #1E1E1E;
                 color: #CCCCCC;
                 border: none;
                 border-radius: 8px;
                 padding: 10px;
-                font-family: Consolas, Monaco, monospace;
+                font-family: "{GLOBAL_FONT}", Consolas, Monaco, monospace;
                 font-size: 11px;
-            }
+            }}
         """)
 
         layout = QtWidgets.QVBoxLayout(dialog)
@@ -2020,7 +2455,7 @@ class AIAssistantDialog(QtWidgets.QDialog):
         is_en = i18n.get_language() == "en"
         title_text = "⬆️ New Version Available" if is_en else "⬆️ 发现新版本"
         title_label = QtWidgets.QLabel(title_text)
-        title_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #5DADE2;")
+        title_label.setStyleSheet(f"font-size: 22px; font-weight: bold; color: #5DADE2; font-family: '{GLOBAL_FONT}';")
         title_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(title_label)
 
@@ -2033,7 +2468,7 @@ class AIAssistantDialog(QtWidgets.QDialog):
             else f"当前: v{current_ver} → 新版: v{latest_ver}"
         )
         version_label = QtWidgets.QLabel(version_text)
-        version_label.setStyleSheet("font-size: 14px; color: #888888;")
+        version_label.setStyleSheet(f"font-size: 14px; color: #888888; font-family: '{GLOBAL_FONT}';")
         version_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(version_label)
 
@@ -2046,7 +2481,7 @@ class AIAssistantDialog(QtWidgets.QDialog):
                 ("Release Notes:" if is_en else "更新内容：") + "\n"
             )
             release_label.setStyleSheet(
-                "font-size: 13px; color: #CCCCCC; font-weight: bold;"
+                f"font-size: 13px; color: #CCCCCC; font-weight: bold; font-family: '{GLOBAL_FONT}';"
             )
             layout.addWidget(release_label)
 
@@ -2064,8 +2499,8 @@ class AIAssistantDialog(QtWidgets.QDialog):
 
         # 安装更新按钮
         install_btn = QtWidgets.QPushButton("Install Update" if is_en else "安装更新")
-        install_btn.setStyleSheet("""
-            QPushButton {
+        install_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #58D68D;
                 color: #2D2D2D;
                 border: none;
@@ -2073,22 +2508,23 @@ class AIAssistantDialog(QtWidgets.QDialog):
                 padding: 12px 24px;
                 font-size: 14px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #76E8A0;
-            }
-            QPushButton:disabled {
+            }}
+            QPushButton:disabled {{
                 background-color: #555555;
                 color: #888888;
-            }
+            }}
         """)
         install_btn.clicked.connect(lambda: self.install_update(dialog))
         btn_layout.addWidget(install_btn)
 
         # 查看更新内容按钮
         view_btn = QtWidgets.QPushButton("View Release" if is_en else "查看更新内容")
-        view_btn.setStyleSheet("""
-            QPushButton {
+        view_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #5DADE2;
                 color: #2D2D2D;
                 border: none;
@@ -2096,10 +2532,11 @@ class AIAssistantDialog(QtWidgets.QDialog):
                 padding: 12px 24px;
                 font-size: 14px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #76C5F0;
-            }
+            }}
         """)
         view_btn.clicked.connect(lambda: self.open_update_page_and_close(dialog))
         btn_layout.addWidget(view_btn)
@@ -2110,17 +2547,18 @@ class AIAssistantDialog(QtWidgets.QDialog):
 
         # 关闭按钮
         close_btn = QtWidgets.QPushButton("Later" if is_en else "稍后")
-        close_btn.setStyleSheet("""
-            QPushButton {
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
                 background-color: #404040;
                 color: #FFFFFF;
                 border: 1px solid #555555;
                 border-radius: 8px;
                 padding: 8px 20px;
-            }
-            QPushButton:hover {
+                font-family: "{GLOBAL_FONT}";
+            }}
+            QPushButton:hover {{
                 background-color: #505050;
-            }
+            }}
         """)
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn, alignment=QtCore.Qt.AlignCenter)
@@ -2456,6 +2894,8 @@ class AIAssistantDialog(QtWidgets.QDialog):
             self.chat_widget.append_to_current(text)
 
     def on_tool_call(self, tool_name, params, result):
+        if tool_name == "$web_search":
+            return
         if result is None:
             return
 

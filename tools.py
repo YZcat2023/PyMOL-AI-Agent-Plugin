@@ -864,6 +864,12 @@ zoom
                 },
             },
         },
+        {
+            "type": "builtin_function",  # 注意：这里必须是 builtin_function，用于区分普通 function
+            "function": {
+                "name": "$web_search",   # 必须以 $ 开头
+            },
+        }
     ]
 
     if is_vision_model:

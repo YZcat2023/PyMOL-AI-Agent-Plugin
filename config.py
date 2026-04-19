@@ -94,7 +94,7 @@ PROVIDERS = {
     "moonshot": {
         "name": "Moonshot (Kimi)",
         "api_base": "https://api.moonshot.cn/v1",
-        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi-k2.5"],
         "prefix": "openai/",
         "requires_api_key": True,
         "requires_api_base": False,
@@ -232,7 +232,7 @@ def create_default_config(name, provider_id="openai"):
         "api_version": "",
         "is_reasoning_model": False,
         "is_vision_model": False,
-        "temperature": 0.7,
+        "temperature": 1,
         "max_tokens": 8000,
         "timeout": 60,
     }
@@ -282,7 +282,7 @@ class ConfigManager:
             if "api_version" not in config:
                 config["api_version"] = ""
             if "temperature" not in config:
-                config["temperature"] = 0.7
+                config["temperature"] = 1
             if "max_tokens" not in config:
                 config["max_tokens"] = 8000
             if "timeout" not in config:

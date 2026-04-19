@@ -63,7 +63,7 @@ class AIClient:
         self.api_version = None
         self.is_reasoning_model = False
         self.is_vision_model = False
-        self.temperature = 0.7
+        self.temperature = 1
         self.max_tokens = 8000
         self.timeout = 60
         self.max_iterations = 40
@@ -77,7 +77,7 @@ class AIClient:
         self.api_version = api_config.get("api_version", "")
         self.is_reasoning_model = api_config.get("is_reasoning_model", False)
         self.is_vision_model = api_config.get("is_vision_model", False)
-        self.temperature = api_config.get("temperature", 0.7)
+        self.temperature = api_config.get("temperature", 1)
         self.max_tokens = api_config.get("max_tokens", 8000)
         self.timeout = api_config.get("timeout", 60)
 
@@ -126,7 +126,10 @@ class AIClient:
 - 请使用与用户相同的语言进行回答（用户用中文就用中文，用户用英文就用英文）- 这是最重要的规则，必须严格遵守
 - 执行大量简单重复任务时，尽量采用运行脚本的形式（使用 pymol_do_command 或 pymol_run_script 工具），这样可以提高效率
 - 完成用户明确要求的需求后，立即停止，不要擅自给出额外建议或提示，用户知道自己要做什么
-
+- 如果全部完成而没有报错，则不需要复述（例如执行了以下操作：），特别是不要按条列出来正确执行的操作，但是如果报错，则需要复述报错了谁并且按条列出没有完成的操作
+- 你是一个智能助手，可以自主决定是否需要联网搜索。如果用户只是简单要求执行pymol任务，那么你不需要联网搜索。如果用户想要你解释蛋白结构或者知识，那么你需要联网搜索。
+- 如果用户没要导出图片，就别截图，只有用户要求截图或者用户要求导出图片时，才截图。
+- 用户的绝大部分需求，都需要使用工具，如果你这次没有使用工具，那么你最好再检查一下用户的需求，是否需要使用工具。
 【可用工具】
 结构加载：
 - pymol_fetch: 从 PDB 数据库下载并加载分子结构（支持 PDB ID 如 1ake）
@@ -158,7 +161,23 @@ class AIClient:
 - pymol_zoom: 缩放视图到指定选择
 - pymol_rotate: 旋转视图或选择（支持 x, y, z 轴）
 - pymol_center: 将视图中心移动到指定选择
-- pymol_reset: 重置视图到默认状态"""
+- pymol_reset: 重置视图到默认状态
+
+隐藏溶剂：
+hide everything, solvent
+
+经典风格：
+这是一个专有的定义，请完全按照其定义执行。分别对配体和蛋白执行:配体标准化和论文风格，并且保证这两个操作不干扰。也就是在执行配体标准化前先选中配体，执行论文出图展示前先选中蛋白。
+
+配体标准化：
+对配体执行，清除所有显示，以细棍状显示所有原子，关闭球棍效果，设置棍半径0.2，util.cbag，白色背景，并进行光线追踪渲染。适用于配体展示和结构可视化。
+
+论文风格：
+对蛋白质执行，疏水表面，浅蓝色半透明(alpha-0.2,不是0.8,切记,这意思是稍微透明一些),隐藏cartoon,隐藏溶剂（hide everything, solvent）,白色背景。
+
+
+
+"""
 
         if self.is_vision_model:
             base_prompt += """
@@ -176,7 +195,6 @@ class AIClient:
 当用户需要美化或优化图片时，可以使用以下风格：
 
 1. 单色扁平莫兰迪 - 冷淡简约风格
-   ```
    set cartoon_loop_radius, 0.2
    set cartoon_oval_width, 0.2
    set cartoon_rect_width, 0.2
@@ -192,10 +210,8 @@ class AIClient:
    set ray_trace_gain, 0.0
    set ambient, 0.66
    set ray_shadow, 0
-   ```
 
 2. AlphaFold置信度着色 - 按预测置信度（pLDDT/B因子）着色
-   ```
    set spec_reflect, 0
    set ray_trace_mode, 0
    set_color high_lddt_c, [0,0.325490196078431,0.843137254901961]
@@ -209,7 +225,6 @@ class AIClient:
    space rgb
    set ray_shadow, 0
    set fog, 0
-   ```
 
 通用美化技巧：
 - 使用 `ray` 进行光线追踪渲染获得高质量图像
@@ -235,7 +250,13 @@ class AIClient:
         if self.is_vision_model:
             base_prompt += """
 7. 如果需要查看当前渲染效果，可以使用 pymol_capture_view 工具捕获截图，这样可以直观地看到画面的实际效果"""
-
+        #如果custom_prompt.txt存在，读取内容并添加到base_prompt中
+        import os
+        plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        txt_path = os.path.join(plugin_dir, "custom_prompt.txt")
+        if os.path.exists(txt_path):
+            with open(txt_path, "r", encoding="utf-8") as f:
+                base_prompt += f.read()
         return base_prompt
 
     def _sanitize_messages(self, messages: list[dict]) -> list[dict]:
@@ -431,8 +452,8 @@ class AIClient:
         }
 
     def _build_request_params(
-        self, messages: list[dict], use_tools: bool = True
-    ) -> dict:
+            self, messages: list[dict], use_tools: bool = True
+        ) -> dict:
         """构建 LiteLLM 请求参数"""
         model_name = self._get_model_name()
 
@@ -442,6 +463,9 @@ class AIClient:
             "temperature": self.temperature,
             "max_tokens": max(1, self.max_tokens),
             "timeout": self.timeout,
+            "extra_body": {
+                "thinking": {"type": "disabled"}
+            },
         }
 
         if self.api_key:
@@ -454,7 +478,32 @@ class AIClient:
             request_params["api_version"] = self.api_version
 
         if use_tools:
-            request_params["tools"] = tools.get_tool_definitions(self.is_vision_model)
+            # 获取所有工具定义
+            all_tools = tools.get_tool_definitions(self.is_vision_model)
+            
+            # 如果是 Kimi 模型，需要特殊处理 $web_search
+            if self.provider == "moonshot" or "kimi" in self.model.lower():
+                # 检查是否已经有 $web_search 工具定义
+                has_web_search = any(
+                    tool.get("function", {}).get("name") == "$web_search" 
+                    for tool in all_tools
+                )
+                
+                # 如果没有 $web_search，添加它（使用 builtin_function 类型）
+                if not has_web_search:
+                    all_tools.append({
+                        "type": "builtin_function",
+                        "function": {
+                            "name": "$web_search",
+                        },
+                    })
+                
+                # 对于其他工具，保持原有的 function 类型
+                # 注意：Kimi 也支持标准的 function calling
+                request_params["tools"] = all_tools
+            else:
+                request_params["tools"] = all_tools
+                
             request_params["tool_choice"] = "auto"
 
         return request_params
@@ -550,7 +599,14 @@ class AIClient:
             tc = tool_calls_map[idx]
             args = tc["arguments"]
             if isinstance(args, str):
-                args = json_repair.loads(args)
+                # 修复：$web_search 的参数可能为空或者不需要解析
+                if args.strip():
+                    try:
+                        args = json_repair.loads(args)
+                    except:
+                        args = {}
+                else:
+                    args = {}
             tool_calls.append(
                 {
                     "id": tc["id"],
@@ -565,7 +621,7 @@ class AIClient:
             "reasoning_content": reasoning_buffer or None,
             "finish_reason": finish_reason,
         }
-
+        
     def chat(
         self,
         messages: list[dict],
@@ -577,19 +633,18 @@ class AIClient:
     ) -> str:
         """
         流式聊天，支持多轮工具调用
-        content/reasoning 实时流式输出，tool_calls 在每轮流结束后统一处理
-
-        Args:
-            messages: 消息列表
-            on_thinking: 思考内容回调 (text, is_end)
-            on_content: 内容回调 (text, is_end)
-            on_tool_call: 工具调用回调 (tool_name, params, result)
-            on_error: 错误回调 (error_msg)
-            images: 图片列表（仅视觉模型支持）
-
-        Returns:
-            str: 最终响应内容
         """
+        import json
+        import datetime
+
+        def _debug_log(msg):
+            try:
+                with open("c:\\Users\\Administrator\\Desktop\\pymolai.log", "a", encoding="utf-8") as f:
+                    timestamp = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+                    f.write(timestamp + str(msg) + "\n")
+            except Exception:
+                pass
+
         provider_info = config.get_provider_info(self.provider)
         requires_key = provider_info.get("requires_api_key", True)
 
@@ -603,12 +658,17 @@ class AIClient:
                 on_error("请输入 API Key")
             return ""
 
+        current_time = datetime.datetime.now().strftime("%Y年%m月%d日 %A")
+        system_content = f"{self._get_system_prompt()}\n\n当前系统时间是：{current_time}。如果用户询问日期或最新信息，请以此时间为准并以联网搜索结果为事实基准。"
+
         full_messages = [
-            {"role": "system", "content": self._get_system_prompt()}
+            {"role": "system", "content": system_content}
         ] + messages
 
         iteration = 0
         final_content = ""
+
+        _debug_log("\n" + "*"*50 + "\n[新对话开始]\n" + "*"*50)
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -621,51 +681,61 @@ class AIClient:
                 else:
                     processed_full_messages = self._sanitize_messages(full_messages)
 
+                # 修复消息格式（保持原有逻辑）
+                for orig_msg, proc_msg in zip(full_messages, processed_full_messages):
+                    if orig_msg.get("role") == "assistant" and orig_msg.get("tool_calls") and proc_msg.get("tool_calls"):
+                        for orig_tc, proc_tc in zip(orig_msg["tool_calls"], proc_msg["tool_calls"]):
+                            if "id" in orig_tc:
+                                proc_tc["id"] = orig_tc["id"]
+                    
+                    if orig_msg.get("role") == "tool":
+                        if orig_msg.get("tool_call_id"):
+                            proc_msg["tool_call_id"] = orig_msg["tool_call_id"]
+                        if orig_msg.get("name"):
+                            proc_msg["name"] = orig_msg["name"]
+
+                _debug_log(f"\n[{'='*20} DEBUG 1: 第 {iteration} 轮请求发出 {'='*20}]")
+                _debug_log(f"当前发往 API 的 messages 长度: {len(processed_full_messages)}")
+                if len(processed_full_messages) >= 2:
+                    _debug_log(f"最后两条 message:\n{json.dumps(processed_full_messages[-2:], ensure_ascii=False, indent=2)}")
+
                 response = self._chat_stream(
                     processed_full_messages,
                     use_tools=True,
                     on_thinking=on_thinking,
                     on_content=on_content,
                 )
-            except _litellm.AuthenticationError as e:
-                error_msg = "API认证失败: %s" % str(e)
-                logger.logger.error(logger.ERRORS, error_msg)
-                if on_error:
-                    on_error(error_msg)
-                return ""
-            except _litellm.RateLimitError as e:
-                error_msg = "API速率限制: %s" % str(e)
-                logger.logger.error(logger.ERRORS, error_msg)
-                if on_error:
-                    on_error(error_msg)
-                return ""
-            except _litellm.APIError as e:
-                error_msg = "API错误: %s" % str(e)
-                logger.logger.error(logger.ERRORS, error_msg)
-                if on_error:
-                    on_error(error_msg)
-                return ""
             except Exception as e:
                 error_msg = "AI请求错误: %s" % str(e)
                 logger.logger.error(logger.ERRORS, error_msg)
                 if on_error:
                     on_error(error_msg)
+                _debug_log(error_msg)
                 return ""
 
             content = response["content"] or ""
             tool_calls = response["tool_calls"]
-            reasoning_content = response["reasoning_content"]
+            reasoning_content = response.get("reasoning_content", "")
+
+            if tool_calls:
+                _debug_log(f"\n[{'='*20} DEBUG 2: 收到 Tool Calls 请求 {'='*20}]")
+                _debug_log(f"原始 tool_calls 数据:\n{json.dumps(tool_calls, ensure_ascii=False, indent=2)}")
 
             if not tool_calls:
                 final_content = content
                 break
 
+            # 构建 assistant message
             tool_call_dicts = []
             for tc in tool_calls:
+                # 判断是否是 Kimi 的内置搜索工具
+                is_builtin_search = (tc["name"] == "$web_search" and 
+                                    (self.provider == "moonshot" or "kimi" in self.model.lower()))
+                
                 tool_call_dicts.append(
                     {
                         "id": tc["id"],
-                        "type": "function",
+                        "type": "builtin_function" if is_builtin_search else "function",
                         "function": {
                             "name": tc["name"],
                             "arguments": json.dumps(
@@ -685,6 +755,7 @@ class AIClient:
 
             full_messages.append(assistant_msg)
 
+            # 处理每个工具调用
             for tc in tool_calls:
                 tool_name = tc["name"]
                 params = tc["arguments"]
@@ -693,59 +764,86 @@ class AIClient:
                 if on_tool_call:
                     on_tool_call(tool_name, arguments_str, None)
 
-                result = tools.tool_executor.execute(tool_name, params)
-
-                logger.logger.info(
-                    logger.TOOL_CALL,
-                    "工具执行: %s" % tool_name,
-                    {"tool": tool_name, "params": params, "result": result},
-                )
-
-                if on_tool_call:
-                    on_tool_call(tool_name, arguments_str, result)
-
-                tool_response_content = result.get("message", "")
-
-                if (
-                    tool_name == "pymol_capture_view"
-                    and result.get("success")
-                    and result.get("image_data")
-                ):
-                    image_base64 = result.get("image_data")
-                    tool_response_content = json.dumps(
-                        {
-                            "message": result.get("message"),
-                            "has_image": True,
-                            "image_url": f"data:image/png;base64,{image_base64}",
-                            "width": result.get("width"),
-                            "height": result.get("height"),
-                        },
-                        ensure_ascii=False,
-                    )
-                elif result.get("output"):
-                    tool_response_content = result.get("output")
-                elif result.get("data"):
-                    tool_response_content = json.dumps(
-                        result.get("data"), ensure_ascii=False
-                    )
-                elif not tool_response_content:
+                # 特殊处理 $web_search（Kimi 内置）
+                if tool_name == "$web_search":
+                    # 对于内置搜索，直接返回参数即可
+                    result = params
                     tool_response_content = json.dumps(result, ensure_ascii=False)
 
-                full_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": tool_response_content,
-                    }
-                )
+                    _debug_log(f"\n[{'='*20} DEBUG 3: $web_search 拦截处理 {'='*20}]")
+                    _debug_log(f"提取的 params: {params}")
+                    _debug_log(f"序列化后的 tool_response_content: {repr(tool_response_content)}")
+
+                    logger.logger.info(
+                        logger.TOOL_CALL,
+                        "触发 Kimi 内置联网搜索: %s" % tool_name,
+                        {"tool": tool_name, "params": params},
+                    )
+
+                    if on_tool_call:
+                        on_tool_call(tool_name, arguments_str, result)
+
+                else:
+                    # 正常执行 PyMOL 或其他工具
+                    result = tools.tool_executor.execute(tool_name, params)
+
+                    logger.logger.info(
+                        logger.TOOL_CALL,
+                        "工具执行: %s" % tool_name,
+                        {"tool": tool_name, "params": params, "result": result},
+                    )
+
+                    if on_tool_call:
+                        on_tool_call(tool_name, arguments_str, result)
+
+                    # 处理不同类型的工具返回结果
+                    tool_response_content = result.get("message", "")
+
+                    if (
+                        tool_name == "pymol_capture_view"
+                        and result.get("success")
+                        and result.get("image_data")
+                    ):
+                        image_base64 = result.get("image_data")
+                        tool_response_content = json.dumps(
+                            {
+                                "message": result.get("message"),
+                                "has_image": True,
+                                "image_url": f"data:image/png;base64,{image_base64}",
+                                "width": result.get("width"),
+                                "height": result.get("height"),
+                            },
+                            ensure_ascii=False,
+                        )
+                    elif result.get("output"):
+                        tool_response_content = result.get("output")
+                    elif result.get("data"):
+                        tool_response_content = json.dumps(
+                            result.get("data"), ensure_ascii=False
+                        )
+                    elif not tool_response_content:
+                        tool_response_content = json.dumps(result, ensure_ascii=False)
+
+                # 添加工具响应消息
+                appended_tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "name": tool_name,
+                    "content": tool_response_content,
+                }
+                full_messages.append(appended_tool_msg)
+
+                _debug_log(f"\n[{'='*20} DEBUG 4: 追加 Tool 消息到上下文 {'='*20}]")
+                _debug_log(f"追加的内容:\n{json.dumps(appended_tool_msg, ensure_ascii=False, indent=2)}")
 
         if iteration >= self.max_iterations and not final_content:
             final_content = (
                 "已达到最大迭代次数 (%d)，任务可能未完成。" % self.max_iterations
             )
+            _debug_log(f"警告: {final_content}")
 
+        _debug_log("\n[对话结束]")
         return final_content
-
     def test_connection(self):
         """测试连接"""
         try:

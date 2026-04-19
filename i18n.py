@@ -108,8 +108,28 @@ TRANSLATIONS = {
         "timeout": "超时时间(秒)：",
         "import_image": "导入图片",
         "paste_image_hint": "或按 Ctrl+V 粘贴图片",
+        "tab_prompt": "附加提示",
+        "prompt_placeholder": """
+# 在这里输入你想要 AI 记住的内容
+# 可以是：
+#   - 角色设定
+#   - 回复格式要求
+#   - 禁止事项
+#   - 快捷指令
+""",
+        "auto_save": "自动保存",
+        "save_prompt": "保存",
+        "saved_prompt": "已保存",
     },
     "en": {
+        "auto_save": "Auto Save",
+        "save_prompt": "Save",
+        "saved_prompt": "Saved",
+        "prompt_placeholder": """
+#Enter your custom prompt here
+#set format requirements, prohibited items, and shortcuts.
+""",
+        "tab_prompt": "Prompt",
         "window_title": "PyMOL AI Assistant",
         "tab_chat": "Chat",
         "tab_config": "Config",
