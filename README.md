@@ -1,4 +1,4 @@
-# PyMOL AI Assistant Plugin
+# 🚧 NOTE: This project is currently under active development and not yet ready for public release.
 
 [![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)](https://github.com/Masterchiefm/pymol-ai-assistant/releases)
 [![Python](https://img.shields.io/badge/python-3.x-green.svg)](https://www.python.org/)
