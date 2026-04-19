@@ -1,4 +1,9 @@
-# 🚧 NOTE: This project is currently under active development and not yet ready for public release.
+#添加了以下特性：
+#UI文字切换：现在自动探测用户语言环境，不需要手动按按钮切换中英文
+#KIMI的api可以在线检索了，避免离线模型乱答影响实验
+#调整了UI中图片上传UI的位置，修复了高分屏的一些bug，调整了UI的字体和配置文件夹显示高级配置的逻辑
+#用原日志的位置设置了自定义prompt的调整窗口
+#当使用思考模式时，默认折叠思考内容
 
 [![Version](https://img.shields.io/badge/version-1.4.1-blue.svg)](https://github.com/Masterchiefm/pymol-ai-assistant/releases)
 [![Python](https://img.shields.io/badge/python-3.x-green.svg)](https://www.python.org/)
