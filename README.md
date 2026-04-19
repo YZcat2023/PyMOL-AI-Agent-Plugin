@@ -1,3 +1,4 @@
+#感谢@Masterchiefm（https://github.com/Masterchiefm/pymol-ai-assistant）.这是修复和添加特性的说明。
 #添加了以下特性：
 #UI文字切换：现在自动探测用户语言环境，不需要手动按按钮切换中英文
 #KIMI的api可以在线检索了，避免离线模型乱答影响实验
