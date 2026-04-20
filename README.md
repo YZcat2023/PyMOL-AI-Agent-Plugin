@@ -35,19 +35,6 @@ As shown in the screenshot, you only need to describe your needs in everyday lan
 
 ---
 
-## 🌐 Repositories
-
-This project is maintained simultaneously on GitHub and Gitee:
-
-| Platform | URL | Recommendation |
-|----------|-----|----------------|
-| **GitHub** | https://github.com/Masterchiefm/pymol-ai-assistant | ⭐ International |
-| **Gitee** | https://gitee.com/MasterChiefm/pymol-ai-assistant | 🇨🇳 China (Recommended) |
-
-> **Tip**: Users in China are recommended to use Gitee for faster and more stable download speeds.
-
----
-
 ## ✨ Features
 
 | Feature | Description |
@@ -68,9 +55,7 @@ This project is maintained simultaneously on GitHub and Gitee:
 ### Install via Plugin Manager
 
 1. **Download Plugin**
-   - GitHub: [Releases Page](https://github.com/Masterchiefm/pymol-ai-assistant/releases/latest)
-   - Gitee: [Releases Page](https://gitee.com/MasterChiefm/pymol-ai-assistant/releases)
-   - Download `pymol-ai-assistant.zip`
+   - Download PyMOL-AI-Agent-Plugin.zip from release page
 
 2. **Installation Steps**
    
