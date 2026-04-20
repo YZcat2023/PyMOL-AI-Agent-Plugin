@@ -1,12 +1,3 @@
-
-#感谢@Masterchiefm（https://github.com/Masterchiefm/pymol-ai-assistant）.这是修复和添加特性的说明。
-#添加了以下特性：
-#UI文字切换：现在自动探测用户语言环境，不需要手动按按钮切换中英文
-#KIMI的api可以在线检索了，避免离线模型乱答影响实验
-#调整了UI中图片上传UI的位置，修复了高分屏的一些bug，调整了UI的字体和配置文件夹显示高级配置的逻辑
-#用原日志的位置设置了自定义prompt的调整窗口
-#当使用思考模式时，默认折叠思考内容
-
 Thanks to @Masterchiefm (https://github.com/Masterchiefm/pymol-ai-assistant). This is a description of fixes and added features.
 
 The following features have been added:
